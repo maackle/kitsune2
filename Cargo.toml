@@ -1,0 +1,7 @@
+[workspace]
+members = [
+  "crates/api",
+]
+resolver = "2"
+
+[workspace.dependencies]
