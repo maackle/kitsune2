@@ -135,6 +135,7 @@ static AGENT_DISP: std::sync::OnceLock<DisplayCb> = std::sync::OnceLock::new();
     serde::Serialize,
     serde::Deserialize,
 )]
+#[serde(transparent)]
 pub struct AgentId(pub Id);
 
 imp_deref!(AgentId, Id);
@@ -176,6 +177,7 @@ static SPACE_DISP: std::sync::OnceLock<DisplayCb> = std::sync::OnceLock::new();
     serde::Serialize,
     serde::Deserialize,
 )]
+#[serde(transparent)]
 pub struct SpaceId(pub Id);
 
 imp_deref!(SpaceId, Id);
@@ -217,6 +219,7 @@ static OP_DISP: std::sync::OnceLock<DisplayCb> = std::sync::OnceLock::new();
     serde::Serialize,
     serde::Deserialize,
 )]
+#[serde(transparent)]
 pub struct OpId(pub Id);
 
 imp_deref!(OpId, Id);
