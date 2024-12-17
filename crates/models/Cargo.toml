@@ -1,5 +1,5 @@
 [package]
-name = "bootstrap_model"
+name = "kitsune2_models"
 version = "0.1.0"
 edition = "2021"
 

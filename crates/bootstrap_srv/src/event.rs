@@ -13,7 +13,10 @@ use polestar::{
 
 use crate::{ParsedEntry, SpaceId};
 
-use bootstrap_model::{BootAction, BootModel, NewInfo, StoredEntry};
+use kitsune2_models::bootstrap::{
+    BootAction, BootModel, NewInfo, StoredEntry, A as AgentNum, S as SpaceNum,
+    T as TimeNum,
+};
 
 static EVENT_WRITER: once_cell::sync::Lazy<
     Mutex<JsonActionWriter<BootstrapModelMapping>>,
@@ -44,8 +47,8 @@ impl BootstrapEvent {
 
 #[derive(Default)]
 pub struct BootstrapModelMapping {
-    spaces: IdMap<SpaceId, bootstrap_model::S>,
-    agents: IdMap<VerifyingKey, bootstrap_model::A>,
+    spaces: IdMap<SpaceId, SpaceNum>,
+    agents: IdMap<VerifyingKey, AgentNum>,
     /// Entries keyed by expiry time
     entries: HashMap<(SpaceId, VerifyingKey), ParsedEntry>,
 }
@@ -128,7 +131,7 @@ impl ModelMapping for BootstrapModelMapping {
 }
 
 impl BootstrapModelMapping {
-    pub fn expire_upto(&mut self, now: i64) -> bootstrap_model::T {
+    pub fn expire_upto(&mut self, now: i64) -> TimeNum {
         let count_before = self.entries.len();
         self.entries.retain(|_, e| e.expires_at > now);
         let count_after = self.entries.len();

@@ -1,4 +1,4 @@
-use bootstrap_model::BootModel;
+use kitsune2_models::bootstrap::BootModel;
 use polestar::{
     diagram::write_dot,
     traversal::{traverse, TraversalConfig, TraversalGraphingConfig},
