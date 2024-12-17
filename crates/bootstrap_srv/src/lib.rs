@@ -203,3 +203,5 @@ pub use server::*;
 
 #[cfg(test)]
 mod test;
+
+pub(crate) mod event;

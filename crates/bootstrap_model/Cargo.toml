@@ -1,0 +1,13 @@
+[package]
+name = "bootstrap_model"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+derive_more = { workspace = true }
+exhaustive = { workspace = true }
+polestar = { workspace = true }
+serde = { workspace = true }
+
+im = "15.1.0"

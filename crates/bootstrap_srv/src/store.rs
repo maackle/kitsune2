@@ -48,7 +48,7 @@ struct Writer {
 type WriterPool = Arc<Mutex<std::collections::VecDeque<Writer>>>;
 
 /// A reference to previously written data.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StoreEntryRef {
     read_clone: Arc<tempfile::NamedTempFile>,
     offset: u64,

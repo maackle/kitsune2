@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use crate::*;
+use event::BootstrapEvent;
 
 /// Don't allow created_at to be greater than this far away from now.
 /// 3 minutes.
@@ -136,8 +137,15 @@ fn prune_worker(
 
         if last_check.elapsed() >= config.prune_interval {
             last_check = std::time::Instant::now();
+            // get the current system time
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .expect("InvalidSystemTime")
+                .as_micros() as i64;
 
-            space_map.update_all(config.max_entries_per_space);
+            space_map.update_all(now, config.max_entries_per_space);
+
+            BootstrapEvent::UpdateAll { now }.record()?;
         }
     }
 
@@ -168,6 +176,9 @@ fn worker(
 
         handler.handle(req)?;
     }
+
+    BootstrapEvent::StopWorker.record()?;
+
     Ok(())
 }
 
@@ -215,6 +226,8 @@ impl<'lt> Handler<'lt> {
         space: bytes::Bytes,
     ) -> std::io::Result<(u16, Vec<u8>)> {
         let res = self.space_map.read(&space)?;
+
+        BootstrapEvent::Get.record()?;
 
         Ok((200, res))
     }
@@ -282,11 +295,26 @@ impl<'lt> Handler<'lt> {
             Some(self.store.write(&body)?)
         };
 
+        // get the current system time
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .expect("InvalidSystemTime")
+            .as_micros() as i64;
+
+        BootstrapEvent::Put(info.clone()).record()?;
+
         self.space_map.update(
+            now,
             self.config.max_entries_per_space,
             space,
-            Some((info, r)),
+            Some((info.clone(), r)),
         );
+
+        BootstrapEvent::Update {
+            now,
+            entry: info.clone(),
+        }
+        .record()?;
 
         Ok((200, b"{}".to_vec()))
     }

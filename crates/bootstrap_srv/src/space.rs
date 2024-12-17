@@ -29,12 +29,12 @@ impl SpaceMap {
     }
 
     /// Update all the spaces stored in this map.
-    pub fn update_all(&self, max_entries: usize) {
+    pub fn update_all(&self, now: i64, max_entries: usize) {
         // minimize outer mutex lock time
         let all = self.0.lock().unwrap().keys().cloned().collect::<Vec<_>>();
 
         for space in all {
-            self.update(max_entries, space, None);
+            self.update(now, max_entries, space, None);
         }
     }
 
@@ -43,6 +43,7 @@ impl SpaceMap {
     /// validation before calling this function.
     pub fn update(
         &self,
+        now: i64,
         max_entries: usize,
         space: SpaceId,
         new_info: Option<(crate::ParsedEntry, Option<StoreEntryRef>)>,
@@ -79,7 +80,7 @@ impl SpaceMap {
         };
 
         // do the actual update without the outer mutex locked
-        space.update(max_entries, new_info);
+        space.update(now, max_entries, new_info);
     }
 }
 
@@ -150,15 +151,10 @@ impl Space {
     /// validation before calling this function.
     pub fn update(
         &self,
+        now: i64,
         max_entries: usize,
         mut new_info: Option<(crate::ParsedEntry, Option<StoreEntryRef>)>,
     ) {
-        // get the current system time
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .expect("InvalidSystemTime")
-            .as_micros() as i64;
-
         // only allow one write at a time
         let write_lock = self.write_lock.lock().unwrap();
 

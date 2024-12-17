@@ -1,5 +1,6 @@
 /// An entry with known content: [crate::spec#1-types].
 #[derive(Debug)]
+#[cfg_attr(feature = "polestar", derive(Clone))]
 pub struct ParsedEntry {
     /// agent
     pub agent: ed25519_dalek::VerifyingKey,

@@ -28,11 +28,19 @@ serde_json = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["time", "rt", "rt-multi-thread"] }
 
+# polestar and its deps
+polestar = { workspace = true }
+anyhow = { workspace = true }
+bootstrap_model = { workspace = true }
+once_cell = { workspace = true }
+
+
 [dev-dependencies]
 ureq = { workspace = true }
 
 [features]
-default = []
+default = ["polestar"]
 
 # enable axum http2 support
 http2 = ["axum/http2"]
+polestar = []
