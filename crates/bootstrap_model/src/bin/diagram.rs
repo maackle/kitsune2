@@ -1,6 +1,6 @@
-use bootstrap_model::{BootAction, BootModel};
+use bootstrap_model::BootModel;
 use polestar::{
-    diagram::{exhaustive::*, write_dot},
+    diagram::write_dot,
     traversal::{traverse, TraversalConfig, TraversalGraphingConfig},
 };
 

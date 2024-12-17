@@ -59,29 +59,31 @@ impl ModelMapping for BootstrapModelMapping {
         &mut self,
         event: &Self::Event,
     ) -> Option<ActionOf<Self::Model>> {
+        return None;
         Some(match event {
             BootstrapEvent::Get => BootAction::Get,
             BootstrapEvent::Put(_) => return None,
             BootstrapEvent::Update { now, entry } => {
                 // this is probably too much
-                match self.entries.entry((entry.space.clone(), entry.agent)) {
+                let is_newer = match self
+                    .entries
+                    .entry((entry.space.clone(), entry.agent))
+                {
                     std::collections::hash_map::Entry::Occupied(mut o) => {
                         let existing = o.get_mut();
-                        if existing.created_at > entry.created_at {
-                            // ignore
-                            return None;
-                        } else if entry.is_tombstone {
-                            o.remove();
-                        } else {
-                            *existing = entry.clone();
-                        }
+                        let is_newer = entry.created_at > existing.created_at;
+                        // if entry.is_tombstone {
+                        //     o.remove();
+                        // } else {
+                        //     *existing = entry.clone();
+                        // }
 
                         todo!()
                     }
                     std::collections::hash_map::Entry::Vacant(v) => {
                         todo!()
                     }
-                }
+                };
 
                 self.expire_upto(*now);
 
@@ -91,6 +93,7 @@ impl ModelMapping for BootstrapModelMapping {
                     expiry_index: todo!(),
                     agent: self.agents.lookup(entry.agent).unwrap(),
                     space: self.spaces.lookup(entry.space.clone()).unwrap(),
+                    is_newer,
                     is_tombstone: entry.is_tombstone,
                 };
 
