@@ -11,3 +11,4 @@ polestar = { workspace = true }
 serde = { workspace = true }
 
 im = "15.1.0"
+itertools = "*"

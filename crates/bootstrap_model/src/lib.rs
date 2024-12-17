@@ -9,6 +9,7 @@
 
 #![allow(unused)]
 
+use itertools::Itertools;
 use std::collections::BTreeMap;
 
 use anyhow::{anyhow, bail};
@@ -17,8 +18,8 @@ use polestar::prelude::*;
 use serde::{Deserialize, Serialize};
 
 const NUM_SPACES: usize = 2;
-const NUM_AGENTS: usize = 2;
-const ENTRIES_PER_SPACE: usize = 2;
+const NUM_AGENTS: usize = 3;
+const ENTRIES_PER_SPACE: usize = 4;
 const MAX_ENTRIES: usize = NUM_SPACES * ENTRIES_PER_SPACE;
 
 /// Space IDs
@@ -57,7 +58,7 @@ pub type T = UpTo<MAX_ENTRIES>;
 pub enum BootAction {
     Get,
 
-    #[display("Update {info:?} {expire_count}")]
+    #[display("U {} ({expire_count})", info.map(|i| format!("{i}")).unwrap_or("*".to_string()))]
     Update {
         info: Option<NewInfo>,
         expire_count: T,
@@ -69,16 +70,16 @@ pub enum BootAction {
 #[derive(
     Clone,
     Copy,
-    // Debug,
+    Debug,
     PartialEq,
     Eq,
     Hash,
     Exhaustive,
     Serialize,
     Deserialize,
-    derive_more::Debug,
+    derive_more::Display,
 )]
-#[debug("{agent}.{space}[{expiry_index}]{}", if *is_tombstone { "X" } else { " " })]
+#[display("[{expiry_index}]{}{agent}.{space}", if *is_tombstone { "X" } else { " " })]
 pub struct NewInfo {
     pub agent: A,
     pub space: S,
@@ -105,7 +106,7 @@ pub struct NewInfo {
     derive_more::From,
     derive_more::Display,
 )]
-#[display("({num_workers}) {entries:?}")]
+#[display("({num_workers}) [{}]", entries.iter().map(|e| format!("{e}")).join(", "))]
 pub struct BootState {
     num_workers: usize,
     entries: im::Vector<StoredEntry>,
@@ -121,7 +122,7 @@ pub struct BootState {
     derive_more::From,
     derive_more::Display,
 )]
-#[display("{space}.{agent}")]
+#[display("{space}-{agent}")]
 pub struct StoredEntry {
     space: S,
     agent: A,
@@ -159,7 +160,9 @@ impl Machine for BootModel {
         match action {
             BootAction::Get => bail!("unimplemented"),
             BootAction::Update { info, expire_count } => {
-                if *expire_count >= state.entries.len() {
+                if *expire_count > state.entries.len() {
+                    bail!("expire_count is greater than the number of entries");
+                } else if *expire_count == state.entries.len() {
                     state.entries.clear();
                 } else if *expire_count > 0 {
                     let (_before, after) =
@@ -168,15 +171,42 @@ impl Machine for BootModel {
                 }
 
                 if let Some(info) = info {
+                    let mut found = false;
                     state.entries.retain(|e| {
-                        !(e.space == info.space && e.agent == info.agent)
+                        let hit =
+                            e.space == info.space && e.agent == info.agent;
+                        if hit {
+                            found = true;
+                        }
+                        !hit
                     });
-                    let i = state.entries.len().min(*info.expiry_index);
-                    let entry = StoredEntry {
-                        space: info.space,
-                        agent: info.agent,
-                    };
-                    state.entries.insert(i, entry);
+
+                    if !found && info.is_tombstone {
+                        bail!("nothing to tombstone");
+                    }
+
+                    // this is certainly wrong since it's not clear whether expiry_index
+                    // is pre- or post-pruning
+                    if info.is_tombstone {
+                        if *info.expiry_index > state.entries.len() {
+                            bail!("expiry_index too large");
+                        }
+                    } else {
+                        if *info.expiry_index > state.entries.len() {
+                            bail!("expiry_index too large");
+                        }
+                    }
+
+                    // add the new entry if it's not a tombstone
+                    // TODO: shouldn't the tombstone actually persist?
+                    if !info.is_tombstone {
+                        let i = (*info.expiry_index).min(state.entries.len());
+                        let entry = StoredEntry {
+                            space: info.space,
+                            agent: info.agent,
+                        };
+                        state.entries.insert(*info.expiry_index, entry);
+                    }
                 }
             }
             BootAction::StopWorker => {
