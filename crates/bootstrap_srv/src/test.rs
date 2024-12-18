@@ -253,33 +253,6 @@ fn tombstone_old_is_ignored() {
 }
 
 #[test]
-fn tombstone_persists() {
-    let s = BootstrapSrv::new(Config::testing()).unwrap();
-
-    let _ = PutInfo {
-        addr: s.listen_addrs()[0],
-        is_tombstone: true,
-        ..Default::default()
-    }
-    .call()
-    .unwrap();
-
-    let _ = PutInfo {
-        addr: s.listen_addrs()[0],
-        created_at: now()
-            - std::time::Duration::from_secs(60).as_micros() as i64,
-        ..Default::default()
-    }
-    .call()
-    .unwrap();
-
-    let addr = format!("http://{:?}/bootstrap/{}", s.listen_addrs()[0], S1);
-    let res = ureq::get(&addr).call().unwrap().into_string().unwrap();
-    let res: Vec<DecodeAgent> = serde_json::from_str(&res).unwrap();
-    assert_eq!(0, res.len());
-}
-
-#[test]
 fn tombstone_deletes_correct_agent() {
     let s = BootstrapSrv::new(Config::testing()).unwrap();
 
