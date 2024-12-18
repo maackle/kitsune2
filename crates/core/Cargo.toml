@@ -21,6 +21,13 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["sync", "rt"] }
 tracing = { workspace = true }
 
+# polestar and its deps
+polestar = { workspace = true }
+anyhow = { workspace = true }
+kitsune2_models = { workspace = true }
+once_cell = { workspace = true }
+
+
 [dev-dependencies]
 rand = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

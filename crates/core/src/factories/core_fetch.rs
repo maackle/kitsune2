@@ -13,7 +13,7 @@
 //! ### State object [CoreFetch]
 //!
 //! - Exposes public method [CoreFetch::add_ops] that takes a list of op ids and an agent id.
-//! - Stores pairs of ([OpId][AgentId]) in a set.
+//! - Stores pairs of ([OpId], [AgentId]) in a set.
 //! - A hash set is used to look up elements by key efficiently. Ops may be added redundantly
 //!   to the set with different sources to fetch from, so the set is keyed by op and agent id together.
 //!
@@ -46,6 +46,7 @@ use std::{
     time::Instant,
 };
 
+use event::CoreFetchEvent;
 use kitsune2_api::{
     builder,
     config::ModConfig,
@@ -258,6 +259,13 @@ impl CoreFetch {
                             .clone()
                             .into_iter()
                             .filter(|(_, a)| *a != agent_id)
+                            .inspect(|(op_id, agent_id)| {
+                                CoreFetchEvent::AddOp(
+                                    op_id.clone(),
+                                    agent_id.clone(),
+                                )
+                                .record();
+                            })
                             .collect();
                         continue;
                     }
@@ -286,7 +294,9 @@ impl CoreFetch {
                                 .lock()
                                 .unwrap()
                                 .ops
-                                .remove(&(op_id, agent_id));
+                                .remove(&(op_id.clone(), agent_id.clone()));
+
+                            CoreFetchEvent::RemoveOp(op_id, agent_id).record();
                         }
                     }
                     Err(err) => {
@@ -296,6 +306,10 @@ impl CoreFetch {
                             .unwrap()
                             .cool_down_list
                             .add_agent(agent_id.clone());
+
+                        CoreFetchEvent::AgentCoolDown(agent_id.clone())
+                            .record();
+
                         // Agent is unresponsive.
                         // Remove associated op ids from set to prevent build-up of state.
                         let mut lock = state.lock().unwrap();
@@ -305,6 +319,9 @@ impl CoreFetch {
                             .into_iter()
                             .filter(|(_, a)| *a != agent_id)
                             .collect();
+
+                        CoreFetchEvent::RemoveOpsForAgent(agent_id.clone())
+                            .record();
                     }
                 }
             }
@@ -384,5 +401,6 @@ impl CoolDownList {
     }
 }
 
+pub mod event;
 #[cfg(test)]
 mod test;

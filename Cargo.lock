@@ -1284,10 +1284,14 @@ dependencies = [
 name = "kitsune2_core"
 version = "0.0.1-alpha"
 dependencies = [
+ "anyhow",
  "bytes",
  "ed25519-dalek",
  "futures",
  "kitsune2_api",
+ "kitsune2_models",
+ "once_cell",
+ "polestar",
  "prost",
  "rand",
  "serde",
@@ -1630,6 +1634,7 @@ dependencies = [
  "nom",
  "num-derive",
  "num-traits",
+ "once_cell",
  "parking_lot",
  "petgraph",
  "prettydiff",
