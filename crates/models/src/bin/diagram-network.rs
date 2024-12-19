@@ -13,9 +13,19 @@ fn main() {
         .with_max_level(tracing::Level::INFO)
         .init();
 
+    // ops=1, agents=4, delaymax=2:
+    // &report = TraversalReport {
+    //     num_visited: 566056,
+    //     num_terminations: 0,
+    //     num_edges_skipped: 24816352,
+    //     total_steps: 6882785,
+    //     max_depth: 20,
+    //     time_taken: 231.498187791s,
+    // }
+
     OpId::set_limit(1);
     AgentId::set_limit(3);
-    DelayMax::set_limit(1);
+    DelayMax::set_limit(3);
 
     let model = NetworkModel::default();
     let initial = model.initial();

@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use polestar::*;
 
 use crate::{AgentId, OpId};

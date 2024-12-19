@@ -13,8 +13,6 @@ use crate::OpId;
 ░░████████░░██████   ░░█████  █████░░██████  ████ █████
  ░░░░░░░░  ░░░░░░     ░░░░░  ░░░░░  ░░░░░░  ░░░░ ░░░░░   */
 
-type Action = OpStoreMemoryAction;
-
 #[derive(
     Debug,
     Clone,
@@ -38,8 +36,6 @@ pub enum OpStoreMemoryAction {
  ██████   ░░█████ ░░████████  ░░█████ ░░██████
 ░░░░░░     ░░░░░   ░░░░░░░░    ░░░░░   ░░░░░░  */
 
-type State = OpStoreMemoryState;
-
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash, Deref, DerefMut)]
 pub struct OpStoreMemoryState {
     pub ops: HashSet<OpId>,
@@ -53,8 +49,6 @@ pub struct OpStoreMemoryState {
  ░███ ░███ ░███ ░███ ░███░███ ░███ ░███░░░   ░███
  █████░███ █████░░██████ ░░████████░░██████  █████
 ░░░░░ ░░░ ░░░░░  ░░░░░░   ░░░░░░░░  ░░░░░░  ░░░░░  */
-
-type Model = OpStoreMemoryModel;
 
 #[derive(Default)]
 pub struct OpStoreMemoryModel;

@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail};
-use im::{HashMap, HashSet, OrdSet, Vector};
+use im::{HashMap, HashSet, OrdSet};
 use polestar::prelude::*;
 
 use crate::{fetch::*, op_store_memory::*, peer_store_basic::*, AgentId, OpId};
@@ -152,8 +152,6 @@ impl Delay {
  █████░███ █████░░██████ ░░████████░░██████  █████
 ░░░░░ ░░░ ░░░░░  ░░░░░░   ░░░░░░░░  ░░░░░░  ░░░░░  */
 
-type Model = NetworkModel;
-
 /// Each node in the network uses the same model, so we don't need one per node.
 pub struct NetworkModel {
     node_ids: HashSet<AgentId>,
@@ -166,9 +164,9 @@ pub struct NetworkModel {
 
 #[derive(Default)]
 pub struct NetworkSubModel {
-    peers: PeerStoreBasicModel,
+    // peers: PeerStoreBasicModel,
     ops: OpStoreMemoryModel,
-    fetch: FetchModel,
+    // fetch: FetchModel,
 }
 
 impl Machine for NetworkModel {

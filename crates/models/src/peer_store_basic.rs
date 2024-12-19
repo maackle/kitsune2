@@ -13,8 +13,6 @@ use crate::AgentId;
 ░░████████░░██████   ░░█████  █████░░██████  ████ █████
  ░░░░░░░░  ░░░░░░     ░░░░░  ░░░░░  ░░░░░░  ░░░░ ░░░░░   */
 
-type Action = PeerStoreBasicAction;
-
 #[derive(
     Debug,
     Clone,
@@ -38,8 +36,6 @@ pub enum PeerStoreBasicAction {
  ██████   ░░█████ ░░████████  ░░█████ ░░██████
 ░░░░░░     ░░░░░   ░░░░░░░░    ░░░░░   ░░░░░░  */
 
-type State = PeerStoreBasicState;
-
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash, Deref, DerefMut)]
 pub struct PeerStoreBasicState {
     pub peers: HashSet<AgentId>,
@@ -53,8 +49,6 @@ pub struct PeerStoreBasicState {
  ░███ ░███ ░███ ░███ ░███░███ ░███ ░███░░░   ░███
  █████░███ █████░░██████ ░░████████░░██████  █████
 ░░░░░ ░░░ ░░░░░  ░░░░░░   ░░░░░░░░  ░░░░░░  ░░░░░  */
-
-type Model = PeerStoreBasicModel;
 
 #[derive(Default)]
 pub struct PeerStoreBasicModel;
