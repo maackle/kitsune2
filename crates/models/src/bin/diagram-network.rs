@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use kitsune2_models::{
     network::{DelayMax, NetworkModel},
     AgentId, OpId,
@@ -8,6 +9,10 @@ use polestar::{
 };
 
 fn main() {
+    tracing_subscriber::fmt::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
+
     OpId::set_limit(1);
     AgentId::set_limit(3);
     DelayMax::set_limit(1);
@@ -15,34 +20,32 @@ fn main() {
     let model = NetworkModel::default();
     let initial = model.initial();
     let config = TraversalConfig::builder()
-        // .max_depth(4)
-        .graphing(TraversalGraphingConfig {
-            ignore_loopbacks: true,
-        })
+        // .graphing(TraversalGraphingConfig {
+        //     ignore_loopbacks: true,
+        // })
+        .trace_every(100_000)
+        // .max_depth(2)
+        // .trace_error(true)
         .build();
 
     let (report, graph, _) =
         traverse(model.into(), initial, config, Some).unwrap();
-    let graph = graph.unwrap();
-    let graph = graph.map(|_, n| format!("{:?}", n.sub.ops), |_, e| e);
 
     dbg!(report);
-    dbg!(graph.node_count());
-    dbg!(graph.edge_count());
 
-    write_dot("out.dot", &graph, &[]);
+    if let Some(graph) = graph {
+        let graph = graph.map(
+            |_, n| {
+                n.nodes
+                    .iter()
+                    .map(|(i, n)| format!("{i}: {} ops", n.sub.ops.len()))
+                    .join("\n")
+            },
+            |_, e| e,
+        );
+        dbg!(graph.node_count());
+        dbg!(graph.edge_count());
 
-    // let config = DiagramConfig {
-    //     max_depth: Some(1),
-    //     ..Default::default()
-    // };
-
-    // write_dot_state_diagram_mapped(
-    //     "bootstrap.dot",
-    //     model,
-    //     initial,
-    //     &config,
-    //     Some,
-    //     Some,
-    // );
+        write_dot("out.dot", &graph, &[]);
+    }
 }
