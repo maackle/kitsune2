@@ -13,8 +13,19 @@ use crate::{AgentId, OpId};
 
 type Action = FetchAction;
 
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    exhaustive::Exhaustive,
+)]
 pub enum FetchAction {
+    #[display("AddOp({}, {})", _0, _1)]
     AddOp(OpId, AgentId),
+    #[display("RemoveOp({}, {})", _0, _1)]
     RemoveOp(OpId, AgentId),
     RemoveOpsForAgent(AgentId),
 
@@ -33,6 +44,7 @@ pub enum FetchAction {
 
 type State = FetchState;
 
+#[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FetchState {}
 
 /*                            █████          ████
@@ -46,6 +58,7 @@ pub struct FetchState {}
 
 type Model = FetchModel;
 
+#[derive(Default)]
 pub struct FetchModel;
 
 impl Machine for FetchModel {

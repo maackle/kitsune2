@@ -10,5 +10,6 @@ exhaustive = { workspace = true }
 polestar = { workspace = true }
 serde = { workspace = true }
 
+const-random = "*"
 im = "15.1.0"
 itertools = "*"
