@@ -25,6 +25,7 @@ type Action = OpStoreMemoryAction;
     exhaustive::Exhaustive,
 )]
 pub enum OpStoreMemoryAction {
+    #[display("AddOp({})", _0)]
     AddOp(OpId),
 }
 

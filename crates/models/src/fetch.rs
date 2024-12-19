@@ -23,13 +23,16 @@ type Action = FetchAction;
     exhaustive::Exhaustive,
 )]
 pub enum FetchAction {
-    #[display("AddOp({}, {})", _0, _1)]
+    #[display("AddOp(o{}, a{})", _0, _1)]
     AddOp(OpId, AgentId),
-    #[display("RemoveOp({}, {})", _0, _1)]
+    #[display("RemoveOp(o{}, a{})", _0, _1)]
     RemoveOp(OpId, AgentId),
+    #[display("RemoveOpsForAgent(a{})", _0)]
     RemoveOpsForAgent(AgentId),
 
+    #[display("AgentCoolDown(a{})", _0)]
     AgentCoolDown(AgentId),
+    #[display("AgentWarmUp(a{})", _0)]
     AgentWarmUp(AgentId),
 }
 

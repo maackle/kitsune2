@@ -20,9 +20,9 @@ fn main() {
     let model = NetworkModel::default();
     let initial = model.initial();
     let config = TraversalConfig::builder()
-        // .graphing(TraversalGraphingConfig {
-        //     ignore_loopbacks: true,
-        // })
+        .graphing(TraversalGraphingConfig {
+            ignore_loopbacks: true,
+        })
         .trace_every(100_000)
         // .max_depth(2)
         // .trace_error(true)
@@ -31,21 +31,41 @@ fn main() {
     let (report, graph, _) =
         traverse(model.into(), initial, config, Some).unwrap();
 
-    dbg!(report);
+    dbg!(&report);
 
     if let Some(graph) = graph {
-        let graph = graph.map(
-            |_, n| {
-                n.nodes
-                    .iter()
-                    .map(|(i, n)| format!("{i}: {} ops", n.sub.ops.len()))
-                    .join("\n")
-            },
-            |_, e| e,
-        );
-        dbg!(graph.node_count());
-        dbg!(graph.edge_count());
+        if report.num_visited < 1500 {
+            let graph = graph.map(
+                |_, n| {
+                    let mut lines = n
+                        .nodes
+                        .iter()
+                        .map(|(i, n)| {
+                            format!(
+                                "{i}: ops [{}] inflight [{}]",
+                                n.sub
+                                    .ops
+                                    .iter()
+                                    .map(ToString::to_string)
+                                    .join(" "),
+                                n.inflight
+                                    .iter()
+                                    .map(ToString::to_string)
+                                    .join(" ")
+                            )
+                        })
+                        .collect_vec();
+                    lines.sort();
+                    lines.push("".to_string());
+                    lines.join("\n")
+                },
+                |_, e| e,
+            );
+            dbg!(graph.node_count());
+            dbg!(graph.edge_count());
 
-        write_dot("out.dot", &graph, &[]);
+            write_dot("out.dot", &graph, &[]);
+            println!("wrote DOt graph");
+        }
     }
 }

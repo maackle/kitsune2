@@ -26,7 +26,7 @@ type Action = NetworkAction;
     derive_more::Display,
     exhaustive::Exhaustive,
 )]
-#[display("({_0}: {_1})")]
+#[display("(A{_0}: {_1})")]
 pub struct NetworkAction(AgentId, NodeAction);
 
 #[derive(
@@ -41,11 +41,14 @@ pub struct NetworkAction(AgentId, NodeAction);
 pub enum NodeAction {
     #[display("Tick")]
     Tick,
-    #[display("RequestOp({}, {}, {})", _0, _1, _2)]
-    RequestOp(AgentId, OpId, Delay),
 
-    #[display("({})", _0)]
-    Sub(NetworkSubAction),
+    #[display("AuthorOp(op{})", _0)]
+    AuthorOp(OpId),
+
+    #[display("Request(A{}, op{}, T{})", _0, _1, _2)]
+    RequestOp(AgentId, OpId, Delay),
+    // #[display("{}", _0)]
+    // Sub(NetworkSubAction),
 }
 
 #[derive(
@@ -58,12 +61,12 @@ pub enum NodeAction {
     exhaustive::Exhaustive,
 )]
 pub enum NetworkSubAction {
-    #[display("({:?})", _0)]
+    #[display("({}", _0)]
     Op(OpStoreMemoryAction),
-    #[display("({:?})", _0)]
-    Peer(PeerStoreBasicAction),
-    #[display("({:?})", _0)]
+    #[display("({})", _0)]
     Fetch(FetchAction),
+    #[display("({})", _0)]
+    Peer(PeerStoreBasicAction),
 }
 
 /*        █████               █████
@@ -96,7 +99,10 @@ pub struct NetworkSubState {
     pub fetch: FetchState,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, derive_more::Display,
+)]
+#[display("(A{from_agent}, op{op_id}, T{delay})")]
 pub struct InflightOp {
     pub delay: Delay,
     pub from_agent: AgentId,
@@ -116,10 +122,10 @@ pub struct InflightOp {
     exhaustive::Exhaustive,
 )]
 pub enum Delay {
-    #[display("∞")]
-    Infinite,
     #[display("{}", _0)]
     Finite(DelayMax),
+    #[display("∞")]
+    Infinite,
 }
 
 impl Delay {
@@ -152,6 +158,10 @@ type Model = NetworkModel;
 pub struct NetworkModel {
     node_ids: HashSet<AgentId>,
     sub: NetworkSubModel,
+
+    /// If true, only request ops that are known to be held by the peer.
+    /// (this is an unrealistic form of prescience, but weeds out a lot of uninteresting states).
+    only_request_held: bool,
 }
 
 #[derive(Default)]
@@ -172,37 +182,17 @@ impl Machine for NetworkModel {
         mut state: Self::State,
         NetworkAction(node_id, action): NetworkAction,
     ) -> TransitionResult<Self> {
-        let () = state.nodes.owned_update(node_id, |_, mut node| {
+        let () = state.nodes.owned_update(node_id, |network, mut node| {
             match action {
-                NodeAction::Tick => {
-                    let (instant, pending) = if DelayMax::limit() > 1 {
-                        node.inflight.split(&InflightOp {
-                            delay: Delay::finite(1),
-                            from_agent: AgentId::new(0),
-                            op_id: OpId::new(0),
-                        })
-                    } else {
-                        (node.inflight, Default::default())
-                    };
+                NodeAction::AuthorOp(op_id) => {
+                    if network.values().any(|n| n.sub.ops.contains(&op_id)) {
+                        bail!("Op already authored");
+                    }
 
-                    node.sub.ops = instant.into_iter().fold(
-                        Ok(node.sub.ops),
-                        |ops: anyhow::Result<OpStoreMemoryState>, op| {
-                            let (ops, _) = self.sub.ops.transition(
-                                ops?,
-                                OpStoreMemoryAction::AddOp(op.op_id),
-                            )?;
-                            Ok(ops)
-                        },
+                    node.sub.ops = self.sub.ops.transition_(
+                        node.sub.ops,
+                        OpStoreMemoryAction::AddOp(op_id),
                     )?;
-
-                    node.inflight = pending
-                        .into_iter()
-                        .map(|mut op| {
-                            op.delay = op.delay.tick();
-                            op
-                        })
-                        .collect();
                 }
 
                 NodeAction::RequestOp(agent_id, op_id, delay) => {
@@ -216,6 +206,21 @@ impl Machine for NetworkModel {
                         bail!("Op already in op store");
                     }
 
+                    if self.only_request_held {
+                        if self.only_request_held
+                            && !network
+                                .get(&agent_id)
+                                .ok_or_else(|| {
+                                    anyhow!("no peer with id {}", agent_id)
+                                })?
+                                .sub
+                                .ops
+                                .contains(&op_id)
+                        {
+                            bail!("only_request_held: Op not held by peer");
+                        }
+                    }
+
                     node.inflight.insert(InflightOp {
                         delay,
                         from_agent: agent_id,
@@ -223,36 +228,84 @@ impl Machine for NetworkModel {
                     });
                 }
 
-                NodeAction::Sub(sub) => match sub {
-                    NetworkSubAction::Op(op_action) => {
-                        let (ops, _) =
-                            self.sub.ops.transition(node.sub.ops, op_action)?;
-                        node.sub.ops = ops;
+                NodeAction::Tick => {
+                    if node.inflight.is_empty() {
+                        bail!("No inflight ops: tick has no effect");
                     }
-                    NetworkSubAction::Peer(peer_action) => {
-                        #[allow(irrefutable_let_patterns)]
-                        if let PeerStoreBasicAction::AddAgent(a)
-                        | PeerStoreBasicAction::RemoveAgent(a) = peer_action
-                        {
-                            if a == node_id {
-                                bail!("Node cannot add or remove self as peer");
+
+                    let delay_split = if DelayMax::limit() > 1 {
+                        Delay::finite(1)
+                    } else {
+                        Delay::Infinite
+                    };
+
+                    // pull out the currently ready items (delay==0)
+                    let (instant, pending) = node.inflight.split(&InflightOp {
+                        delay: delay_split,
+                        from_agent: AgentId::new(0),
+                        op_id: OpId::new(0),
+                    });
+
+                    // simulate performing the fetch
+                    node.sub.ops = instant.into_iter().fold(
+                        Ok(node.sub.ops),
+                        |ops: anyhow::Result<OpStoreMemoryState>, op| {
+                            let ops = ops?;
+                            let peer = network.get(&op.from_agent).ok_or_else(
+                                || anyhow!("no peer with id {}", op.from_agent),
+                            )?;
+
+                            if peer.sub.ops.contains(&op.op_id) {
+                                self.sub.ops.transition_(
+                                    ops,
+                                    OpStoreMemoryAction::AddOp(op.op_id),
+                                )
+                            } else {
+                                Ok(ops)
                             }
-                        }
-                        let (peers, _) = self
-                            .sub
-                            .peers
-                            .transition(node.sub.peers, peer_action)?;
-                        node.sub.peers = peers;
-                    }
-                    NetworkSubAction::Fetch(fetch_action) => {
-                        //TODO
-                        // let (fetch, _) = self
-                        //     .sub
-                        //     .fetch
-                        //     .transition(node.sub.fetch, fetch_action)?;
-                        // node.sub.fetch = fetch;
-                    }
-                },
+                        },
+                    )?;
+
+                    node.inflight = pending
+                        .into_iter()
+                        .map(|mut op| {
+                            op.delay = op.delay.tick();
+                            op
+                        })
+                        .collect();
+                } // NodeAction::Sub(sub) => match sub {
+                  //     NetworkSubAction::Op(op_action) => match op_action {
+                  //         OpStoreMemoryAction::AddOp(op_id) => {
+                  //             let (ops, _) = self
+                  //                 .sub
+                  //                 .ops
+                  //                 .transition(node.sub.ops, op_action)?;
+                  //             node.sub.ops = ops;
+                  //         }
+                  //     },
+                  //     NetworkSubAction::Peer(peer_action) => {
+                  //         #[allow(irrefutable_let_patterns)]
+                  //         if let PeerStoreBasicAction::AddAgent(a)
+                  //         | PeerStoreBasicAction::RemoveAgent(a) = peer_action
+                  //         {
+                  //             if a == node_id {
+                  //                 bail!("Node cannot add or remove self as peer");
+                  //             }
+                  //         }
+                  //         let (peers, _) = self
+                  //             .sub
+                  //             .peers
+                  //             .transition(node.sub.peers, peer_action)?;
+                  //         node.sub.peers = peers;
+                  //     }
+                  //     NetworkSubAction::Fetch(fetch_action) => {
+                  //         let (fetch, _) = self
+                  //             .sub
+                  //             .fetch
+                  //             .transition(node.sub.fetch, fetch_action)?;
+                  //         node.sub.fetch = fetch;
+                  //     }
+                  // },
             }
             Ok((node, ()))
         })?;
@@ -266,6 +319,7 @@ impl Default for NetworkModel {
         Self {
             node_ids: AgentId::all_values().into(),
             sub: NetworkSubModel::default(),
+            only_request_held: true,
         }
     }
 }
@@ -276,8 +330,30 @@ impl NetworkModel {
             nodes: self
                 .node_ids
                 .iter()
-                .map(|node_id| (*node_id, NodeState::default()))
+                .map(|node_id| {
+                    let mut state = NodeState::default();
+                    for peer in self.node_ids.iter() {
+                        if peer != node_id {
+                            state.sub.peers.peers.insert(*peer);
+                        }
+                    }
+                    (*node_id, state)
+                })
                 .collect(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_delay_ordering() {
+        DelayMax::set_limit(3);
+        assert!(
+            Delay::Finite(DelayMax::new(1)) < Delay::Finite(DelayMax::new(2))
+        );
+        assert!(Delay::Finite(DelayMax::new(2)) < Delay::Infinite);
     }
 }
