@@ -774,18 +774,18 @@ dependencies = [
 
 [[package]]
 name = "exhaustive"
-version = "0.2.2"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a251f510ddb0e940682578a2f92e0468c3bda3214f4d8f791293c161375708b"
+checksum = "c17d918b02c5e21eca6c159d2af826465c29c327677e724abe734d85eac36bb4"
 dependencies = [
  "exhaustive_macros",
 ]
 
 [[package]]
 name = "exhaustive_macros"
-version = "0.2.2"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c47e5f652b733270405807ddae7631125a977b888e04e5185a01a3c6a0b7a36"
+checksum = "5ac620061b89f3ec8650a31c990f2129797a2f89e0ce8b947901df54a9987a47"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1393,6 +1393,22 @@ dependencies = [
 name = "kitsune2_test_utils"
 version = "0.1.0-nopublish"
 dependencies = [
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "kitsune2_toy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "const-random",
+ "derive_more",
+ "exhaustive",
+ "im",
+ "itertools",
+ "polestar",
+ "serde",
  "tracing",
  "tracing-subscriber",
 ]

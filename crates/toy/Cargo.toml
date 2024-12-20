@@ -1,0 +1,17 @@
+[package]
+name = "kitsune2_toy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+derive_more = { workspace = true }
+exhaustive = { workspace = true }
+polestar = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+const-random = "*"
+im = "15.1.0"
+itertools = "*"
