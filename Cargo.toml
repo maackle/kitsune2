@@ -76,6 +76,7 @@ prost-build = "0.13.3"
 # above this section.
 # --- dev-dependencies ---
 kitsune2_bootstrap_srv = { path = "crates/bootstrap_srv" }
+kitsune2_core = { path = "crates/core" }
 kitsune2_memory = { path = "crates/memory" }
 kitsune2_test_utils = { path = "crates/test_utils" }
 
@@ -88,3 +89,5 @@ anyhow = "*"
 derive_more = "*"
 exhaustive = "*"
 once_cell = "*"
+proptest = "*"
+proptest-derive = "*"

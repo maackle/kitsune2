@@ -21,6 +21,9 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
 
+proptest = { workspace = true }
+proptest-derive = { workspace = true }
+
 [dev-dependencies]
 kitsune2_test_utils = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

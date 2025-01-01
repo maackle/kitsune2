@@ -39,12 +39,16 @@ pub struct NetworkAction(AgentId, NodeAction);
     exhaustive::Exhaustive,
 )]
 pub enum NodeAction {
+    /// Increment the delay for all inflight requests by 1,
+    /// and process any requests that have reached a delay of 0.
     #[display("Tick")]
     Tick,
 
     #[display("AuthorOp(op{})", _0)]
     AuthorOp(OpId),
 
+    /// "Send" a request for an op, for which the response will deterministically "arrive"
+    /// after the specified delay.
     #[display("Request(A{}, op{}, T{})", _0, _1, _2)]
     RequestOp(AgentId, OpId, Delay),
     // #[display("{}", _0)]

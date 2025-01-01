@@ -1,5 +1,7 @@
 //! Types dealing with data identity or hashing.
 
+use proptest::prelude::BoxedStrategy;
+
 macro_rules! imp_deref {
     ($i:ty, $t:ty) => {
         impl std::ops::Deref for $i {
@@ -43,6 +45,7 @@ static ID_LOC: std::sync::OnceLock<LocCb> = std::sync::OnceLock::new();
 /// prefix or suffix.
 #[derive(
     Clone,
+    Debug,
     PartialEq,
     Eq,
     PartialOrd,
@@ -52,6 +55,18 @@ static ID_LOC: std::sync::OnceLock<LocCb> = std::sync::OnceLock::new();
     serde::Deserialize,
 )]
 pub struct Id(#[serde(with = "crate::serde_bytes_base64")] pub bytes::Bytes);
+
+impl proptest::arbitrary::Arbitrary for Id {
+    type Parameters = ();
+    type Strategy = BoxedStrategy<Id>;
+
+    fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
+        use proptest::strategy::Strategy;
+        proptest::collection::vec(proptest::prelude::any::<u8>(), 1..36)
+            .prop_map(|v| Id(bytes::Bytes::from(v)))
+            .boxed()
+    }
+}
 
 imp_deref!(Id, bytes::Bytes);
 imp_from!(Id, bytes::Bytes, b => Id(b));
@@ -120,6 +135,7 @@ static AGENT_DISP: std::sync::OnceLock<DisplayCb> = std::sync::OnceLock::new();
     Hash,
     serde::Serialize,
     serde::Deserialize,
+    proptest_derive::Arbitrary,
 )]
 #[serde(transparent)]
 pub struct AgentId(pub Id);
@@ -208,6 +224,7 @@ static OP_DISP: std::sync::OnceLock<DisplayCb> = std::sync::OnceLock::new();
     Hash,
     serde::Serialize,
     serde::Deserialize,
+    proptest_derive::Arbitrary,
 )]
 #[serde(transparent)]
 pub struct OpId(pub Id);
