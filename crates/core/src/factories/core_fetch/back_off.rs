@@ -115,21 +115,17 @@ impl BackOff {
 
 #[cfg(test)]
 mod test {
-    use std::{sync::Arc, time::Duration};
-
-    use kitsune2_api::{fetch::Fetch, SpaceId, Url};
-
     use crate::{
         default_builder,
-        factories::{
-            core_fetch::{
-                back_off::BackOffList,
-                test::{create_op_list, random_agent_id, MockTransport},
-                CoreFetch, CoreFetchConfig,
-            },
-            test_utils::AgentBuilder,
+        factories::core_fetch::{
+            back_off::BackOffList,
+            test::{create_op_list, random_agent_id, MockTransport},
+            CoreFetch, CoreFetchConfig,
         },
     };
+    use kitsune2_api::{fetch::Fetch, SpaceId, Url};
+    use kitsune2_test_utils::agent::*;
+    use std::{sync::Arc, time::Duration};
 
     #[test]
     fn back_off() {
@@ -177,7 +173,7 @@ mod test {
             url: Some(Some(Url::from_str("wss://127.0.0.1:1").unwrap())),
             ..Default::default()
         }
-        .build();
+        .build(TestLocalAgent::default());
         peer_store.insert(vec![agent_info.clone()]).await.unwrap();
 
         let fetch = CoreFetch::new(
@@ -215,6 +211,10 @@ mod test {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg_attr(
+        target_os = "windows",
+        ignore = "flaky: back_off.rs:333:10: called `Result::unwrap()` on an `Err` value: Elapsed(())"
+    )]
     async fn requests_are_dropped_when_max_back_off_expired() {
         let builder =
             Arc::new(default_builder().with_default_config().unwrap());
@@ -235,7 +235,7 @@ mod test {
             url: Some(Some(Url::from_str("wss://127.0.0.1:1").unwrap())),
             ..Default::default()
         }
-        .build();
+        .build(TestLocalAgent::default());
         let agent_url_1 = agent_info_1.url.clone().unwrap();
         peer_store.insert(vec![agent_info_1.clone()]).await.unwrap();
 
@@ -247,7 +247,7 @@ mod test {
             url: Some(Some(Url::from_str("wss://127.0.0.1:2").unwrap())),
             ..Default::default()
         }
-        .build();
+        .build(TestLocalAgent::default());
         peer_store.insert(vec![agent_info_2.clone()]).await.unwrap();
 
         let fetch = CoreFetch::new(
