@@ -1,0 +1,28 @@
+[package]
+name = "kitsune2_gossip"
+version = "0.0.1-alpha"
+description = "Gossip implementation for kitsune2"
+license = "Apache-2.0"
+homepage = "https://github.com/holochain/kitsune2"
+documentation = "https://docs.rs/kitsune2_api"
+authors = ["Holochain Core Dev Team <devcore@holochain.org>"]
+keywords = ["holochain", "holo", "p2p", "dht", "networking"]
+categories = ["network-programming"]
+edition = "2021"
+
+[dependencies]
+kitsune2_api = { workspace = true }
+kitsune2_dht = { workspace = true }
+kitsune2_core = { workspace = true }
+
+prost = { workspace = true }
+bytes = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+kitsune2_api = { workspace = true, features = ["mockall"] }
+kitsune2_core = { workspace = true }
+kitsune2_test_utils = { workspace = true }
+
+tokio = { workspace = true, features = ["full"] }
