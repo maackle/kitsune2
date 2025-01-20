@@ -233,6 +233,55 @@ impl OpStore for Kitsune2MemoryOpStore {
         })
     }
 
+    fn retrieve_op_ids_bounded(
+        &self,
+        start: Timestamp,
+        limit_bytes: usize,
+    ) -> BoxFuture<'_, K2Result<(Vec<OpId>, Timestamp)>> {
+        Box::pin(async move {
+            let new_start = Timestamp::now();
+
+            let self_lock = self.read().await;
+
+            // Capture all ops that are after the start time
+            let mut candidate_ops = self_lock
+                .op_list
+                .values()
+                .filter(|op| op.stored_at >= start)
+                .collect::<Vec<_>>();
+
+            // Sort the ops by the time they were stored
+            candidate_ops.sort_by(|a, b| a.stored_at.cmp(&b.stored_at));
+
+            // Now take as many ops as we can up to the limit
+            let mut total_bytes = 0;
+            let mut last_op_timestamp = None;
+            let op_ids = candidate_ops
+                .into_iter()
+                .take_while(|op| {
+                    total_bytes += op.op_data.len();
+
+                    if total_bytes <= limit_bytes {
+                        true
+                    } else {
+                        last_op_timestamp = Some(op.stored_at);
+                        false
+                    }
+                })
+                .map(|op| op.op_id.clone())
+                .collect();
+
+            Ok((
+                op_ids,
+                if let Some(ts) = last_op_timestamp {
+                    ts
+                } else {
+                    new_start
+                },
+            ))
+        })
+    }
+
     /// Store the combined hash of a time slice.
     ///
     /// The `slice_id` is the index of the time slice. This is a 0-based index. So for a given

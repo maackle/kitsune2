@@ -19,6 +19,9 @@ prost = { workspace = true }
 bytes = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync"] }
 tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
 
 [dev-dependencies]
 kitsune2_api = { workspace = true, features = ["mockall"] }

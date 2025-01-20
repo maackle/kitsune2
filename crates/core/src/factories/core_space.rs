@@ -55,6 +55,7 @@ pub mod config {
 }
 
 use config::*;
+use kitsune2_api::agent::DynLocalAgent;
 
 /// The core space implementation provided by Kitsune2.
 /// You probably will have no reason to use something other than this.
@@ -358,6 +359,13 @@ impl Space for CoreSpace {
                 // also send the tombstone to the bootstrap server
                 self.bootstrap.put(info);
             }
+        })
+    }
+
+    fn get_local_agents(&self) -> BoxFut<'_, K2Result<Vec<DynLocalAgent>>> {
+        Box::pin(async move {
+            let inner = self.inner.lock().unwrap();
+            Ok(inner.local_agent_map.values().cloned().collect())
         })
     }
 

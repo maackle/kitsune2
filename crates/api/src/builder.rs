@@ -45,7 +45,7 @@ pub struct Builder {
 
     /// The [peer_meta_store::PeerMetaStoreFactory] to be used for creating
     /// [peer_meta_store::PeerMetaStore] instances.
-    pub meta_store: peer_meta_store::DynPeerMetaStoreFactory,
+    pub peer_meta_store: peer_meta_store::DynPeerMetaStoreFactory,
 
     /// The [gossip::GossipFactory] to be used for creating
     /// [gossip::Gossip] instances.
@@ -68,7 +68,7 @@ impl Builder {
                 fetch,
                 transport,
                 op_store,
-                meta_store,
+                peer_meta_store,
                 gossip,
             } = &mut self;
 
@@ -79,7 +79,7 @@ impl Builder {
             fetch.default_config(config)?;
             transport.default_config(config)?;
             op_store.default_config(config)?;
-            meta_store.default_config(config)?;
+            peer_meta_store.default_config(config)?;
             gossip.default_config(config)?;
 
             config.mark_defaults_set();

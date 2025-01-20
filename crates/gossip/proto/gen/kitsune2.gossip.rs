@@ -2,49 +2,162 @@
 /// A Kitsune2 gossip protocol message.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct K2GossipMessage {
-    #[prost(oneof = "k2_gossip_message::GossipMessage", tags = "1, 2")]
-    pub gossip_message: ::core::option::Option<k2_gossip_message::GossipMessage>,
+    /// The type of this message.
+    #[prost(enumeration = "k2_gossip_message::GossipMessageType", tag = "1")]
+    pub msg_type: i32,
+    /// The payload or content of this message.
+    #[prost(bytes = "bytes", tag = "2")]
+    pub data: ::prost::bytes::Bytes,
 }
 /// Nested message and enum types in `K2GossipMessage`.
 pub mod k2_gossip_message {
-    #[derive(Clone, PartialEq, ::prost::Oneof)]
-    pub enum GossipMessage {
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum GossipMessageType {
+        Unspecified = 0,
         /// A gossip initiation protocol message.
-        #[prost(message, tag = "1")]
-        Initiate(super::K2GossipInitiateMessage),
+        Initiate = 1,
         /// A gossip acceptance protocol message.
-        #[prost(message, tag = "2")]
-        Accept(super::K2GossipAcceptMessage),
+        Accept = 2,
+        /// A gossip no diff protocol message.
+        NoDiff = 3,
+        /// A gossip agents protocol message.
+        Agents = 4,
+    }
+    impl GossipMessageType {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                Self::Unspecified => "UNSPECIFIED",
+                Self::Initiate => "INITIATE",
+                Self::Accept => "ACCEPT",
+                Self::NoDiff => "NO_DIFF",
+                Self::Agents => "AGENTS",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "UNSPECIFIED" => Some(Self::Unspecified),
+                "INITIATE" => Some(Self::Initiate),
+                "ACCEPT" => Some(Self::Accept),
+                "NO_DIFF" => Some(Self::NoDiff),
+                "AGENTS" => Some(Self::Agents),
+                _ => None,
+            }
+        }
     }
 }
+/// A message representation of a Kitsune2 DHT arc set.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ArcSetMessage {
+    /// The encoded representation of covered DHT sectors.
+    #[prost(uint32, repeated, tag = "1")]
+    pub value: ::prost::alloc::vec::Vec<u32>,
+}
 /// A Kitsune2 gossip initiation protocol message.
+///
+/// Acceptable responses:
+/// - `K2GossipAcceptMessage`
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct K2GossipInitiateMessage {
-    /// The agent ids of the agents from the initiator who are participating in this gossip round.
-    #[prost(bytes = "bytes", repeated, tag = "1")]
+    #[prost(bytes = "bytes", tag = "1")]
+    pub session_id: ::prost::bytes::Bytes,
+    /// The agent ids of the agents from the initiator who are in the in the peer store for the space where gossip is running.
+    #[prost(bytes = "bytes", repeated, tag = "10")]
     pub participating_agents: ::prost::alloc::vec::Vec<::prost::bytes::Bytes>,
+    /// The DHT sectors covered by the union of the agents in the participating_agents list.
+    #[prost(message, optional, tag = "11")]
+    pub arc_set: ::core::option::Option<ArcSetMessage>,
     /// Request ops that are new since the given timestamp.
-    #[prost(int64, tag = "2")]
+    #[prost(int64, tag = "20")]
     pub new_since: i64,
+    /// The maximum number of bytes of new ops to respond with.
+    #[prost(uint32, tag = "21")]
+    pub max_new_bytes: u32,
 }
 /// A Kitsune2 gossip acceptance protocol message.
+///
+/// Acceptable responses:
+/// - `K2GossipNoDiffMessage`
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct K2GossipAcceptMessage {
-    /// The agent ids of the from the acceptor who are participating in this gossip round.
-    #[prost(bytes = "bytes", repeated, tag = "1")]
+    #[prost(bytes = "bytes", tag = "1")]
+    pub session_id: ::prost::bytes::Bytes,
+    /// The agent ids of the agents from the acceptor who are in the in the peer store for the space where gossip is running.
+    #[prost(bytes = "bytes", repeated, tag = "10")]
     pub participating_agents: ::prost::alloc::vec::Vec<::prost::bytes::Bytes>,
+    /// The DHT sectors covered by the union of the agents in the participating_agents list.
+    #[prost(message, optional, tag = "11")]
+    pub arc_set: ::core::option::Option<ArcSetMessage>,
     /// Agent ids of agents that were mentioned in the initiator's participating_agents list
     /// that we do not have in our peer store.
-    #[prost(bytes = "bytes", repeated, tag = "2")]
+    #[prost(bytes = "bytes", repeated, tag = "12")]
     pub missing_agents: ::prost::alloc::vec::Vec<::prost::bytes::Bytes>,
     /// Request ops that are new since the given timestamp.
-    #[prost(int64, tag = "3")]
+    #[prost(int64, tag = "20")]
     pub new_since: i64,
+    /// The maximum number of bytes of new ops to respond with.
+    #[prost(uint32, tag = "21")]
+    pub max_new_bytes: u32,
     /// Ops that we have stored since the timestamp provided by the initiator in `new_since`.
-    #[prost(bytes = "bytes", repeated, tag = "4")]
+    #[prost(bytes = "bytes", repeated, tag = "22")]
     pub new_ops: ::prost::alloc::vec::Vec<::prost::bytes::Bytes>,
     /// Provide a new bookmark for the initiator. Any new ops will have been returned in `new_ops`
     /// and the initiator should use this new timestamp in their `new_since` next time they gossip with us.
-    #[prost(int64, tag = "5")]
+    #[prost(int64, tag = "23")]
     pub updated_new_since: i64,
+}
+/// A Kitsune2 gossip no diff protocol message.
+///
+/// Should be sent as a response to an `K2GossipAcceptMessage` to communicate that there was no diff
+/// or that a diff could not be computed.
+///
+/// Acceptable responses:
+/// - `K2GossipAgentsMessage`
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct K2GossipNoDiffMessage {
+    #[prost(bytes = "bytes", tag = "1")]
+    pub session_id: ::prost::bytes::Bytes,
+    /// Agent ids of agents that were mentioned in the acceptor's participating_agents list
+    /// that we do not have in our peer store.
+    #[prost(bytes = "bytes", repeated, tag = "10")]
+    pub missing_agents: ::prost::alloc::vec::Vec<::prost::bytes::Bytes>,
+    /// The agent infos for the agents that were sent back in the missing_agents list in the acceptor's response.
+    #[prost(bytes = "bytes", repeated, tag = "11")]
+    pub provided_agents: ::prost::alloc::vec::Vec<::prost::bytes::Bytes>,
+    /// Ops that we have stored since the timestamp provided by the acceptors in `new_since`.
+    #[prost(bytes = "bytes", repeated, tag = "20")]
+    pub new_ops: ::prost::alloc::vec::Vec<::prost::bytes::Bytes>,
+    /// Provide a new bookmark for the initiator. Any new ops will have been returned in `new_ops`
+    /// and the acceptor should use this new timestamp in their `new_since` next time they gossip with us.
+    #[prost(int64, tag = "21")]
+    pub updated_new_since: i64,
+    /// Set when the initiator could not compare the acceptor's DHT diff with their own.
+    #[prost(bool, tag = "30")]
+    pub cannot_compare: bool,
+}
+/// A Kitsune2 gossip agents protocol message.
+///
+/// This message is a final message when used in a gossip round.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct K2GossipAgentsMessage {
+    #[prost(bytes = "bytes", tag = "1")]
+    pub session_id: ::prost::bytes::Bytes,
+    /// The agent infos for the agents that were sent back in the missing_agents list of the previous message.
+    #[prost(bytes = "bytes", repeated, tag = "10")]
+    pub provided_agents: ::prost::alloc::vec::Vec<::prost::bytes::Bytes>,
 }

@@ -114,6 +114,41 @@ impl ArcSet {
         self.inner.len()
     }
 
+    /// Encode this arc set into a compressed format for transmission.
+    ///
+    /// The encoding is a simple bitset where each bit represents a sector.
+    pub fn encode(&self) -> Vec<u32> {
+        let mut out = vec![0; 512 / 32];
+
+        for sector in &self.inner {
+            let index = sector / 32;
+            let bit = sector % 32;
+            out[index as usize] |= 1 << bit;
+        }
+
+        out
+    }
+
+    /// Decode an arc set from a compressed format.
+    ///
+    /// See the [ArcSet::encode] method for details on the encoding format.
+    pub fn decode(input: &[u32]) -> K2Result<Self> {
+        if input.len() != 512 / 32 {
+            return Err(K2Error::other("Invalid size for encoded arc set"));
+        }
+
+        let mut inner = HashSet::new();
+        for (index, value) in input.iter().enumerate() {
+            for bit in 0..32 {
+                if value & (1 << bit) != 0 {
+                    inner.insert(index as u32 * 32 + bit);
+                }
+            }
+        }
+
+        Ok(ArcSet { inner })
+    }
+
     /// Check whether a given sector index is included in this arc set.
     pub(crate) fn includes_sector_index(&self, value: u32) -> bool {
         self.inner.contains(&value)
@@ -283,5 +318,37 @@ mod test {
             empty_set,
             empty_set.intersection(&ArcSet::new(vec![DhtArc::FULL]).unwrap())
         );
+    }
+
+    #[test]
+    fn encode_decode_empty() {
+        let set = ArcSet::new(vec![DhtArc::Empty]).unwrap();
+        let encoded = set.encode();
+        let decoded = ArcSet::decode(&encoded).unwrap();
+
+        assert_eq!(set, decoded);
+    }
+
+    #[test]
+    fn encode_decode_full() {
+        let set = ArcSet::new(vec![DhtArc::FULL]).unwrap();
+        let encoded = set.encode();
+        let decoded = ArcSet::decode(&encoded).unwrap();
+
+        assert_eq!(set, decoded);
+    }
+
+    #[test]
+    fn encode_decode_sparse() {
+        let set = ArcSet::new(vec![
+            DhtArc::Arc(0, SECTOR_SIZE - 1),
+            DhtArc::Arc(20 * SECTOR_SIZE, 21 * SECTOR_SIZE - 1),
+        ])
+        .unwrap();
+
+        let encoded = set.encode();
+        let decoded = ArcSet::decode(&encoded).unwrap();
+
+        assert_eq!(set, decoded);
     }
 }
