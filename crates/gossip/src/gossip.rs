@@ -1,3 +1,4 @@
+use crate::initiate::spawn_initiate_task;
 use crate::peer_meta_store::K2PeerMetaStore;
 use crate::protocol::{
     deserialize_gossip_message, encode_agent_ids, encode_agent_infos,
@@ -6,6 +7,7 @@ use crate::protocol::{
     K2GossipNoDiffMessage,
 };
 use crate::state::{GossipRoundState, RoundStage};
+use crate::timeout::spawn_timeout_task;
 use crate::{K2GossipConfig, K2GossipModConfig, MOD_NAME};
 use bytes::Bytes;
 use kitsune2_api::agent::{AgentInfoSigned, DynVerifier};
@@ -91,29 +93,32 @@ impl Drop for DropAbortHandle {
 ///
 /// This type acts as both an implementation of the [Gossip] trait and a [TxModuleHandler].
 #[derive(Debug, Clone)]
-struct K2Gossip {
+pub(crate) struct K2Gossip {
     config: Arc<K2GossipConfig>,
     /// The state of the current initiated gossip round.
     ///
     /// We only initiate one round at a time, so this is a single value.
-    initiated_round_state: Arc<Mutex<Option<GossipRoundState>>>,
+    pub(crate) initiated_round_state: Arc<Mutex<Option<GossipRoundState>>>,
     /// The state of currently accepted gossip rounds.
     ///
     /// This is a map of agent ids to their round state. We can accept gossip from multiple agents
     /// at once, mostly to avoid coordinating initiation.
-    accepted_round_states: Arc<Mutex<HashMap<Url, GossipRoundState>>>,
+    pub(crate) accepted_round_states:
+        Arc<Mutex<HashMap<Url, GossipRoundState>>>,
     space_id: SpaceId,
     // This is a weak reference because we need to call the space, but we do not create and own it.
     // Only a problem in this case because we register the gossip module with the transport and
     // create a cycle.
-    peer_store: DynPeerStore,
-    local_agent_store: DynLocalAgentStore,
-    peer_meta_store: Arc<K2PeerMetaStore>,
+    pub(crate) peer_store: DynPeerStore,
+    pub(crate) local_agent_store: DynLocalAgentStore,
+    pub(crate) peer_meta_store: Arc<K2PeerMetaStore>,
     op_store: DynOpStore,
     fetch: DynFetch,
     agent_verifier: DynVerifier,
     response_tx: Sender<GossipResponse>,
     _response_task: Arc<DropAbortHandle>,
+    _initiate_task: Arc<Option<DropAbortHandle>>,
+    _timeout_task: Arc<Option<DropAbortHandle>>,
 }
 
 impl K2Gossip {
@@ -153,7 +158,7 @@ impl K2Gossip {
         })
         .abort_handle();
 
-        let gossip = K2Gossip {
+        let mut gossip = K2Gossip {
             config: Arc::new(config),
             initiated_round_state: Arc::new(Mutex::new(None)),
             accepted_round_states: Arc::new(Mutex::new(HashMap::new())),
@@ -172,6 +177,8 @@ impl K2Gossip {
                 name: "Gossip response task".to_string(),
                 handle: response_task,
             }),
+            _initiate_task: Default::default(),
+            _timeout_task: Default::default(),
         };
 
         transport.register_module_handler(
@@ -180,16 +187,27 @@ impl K2Gossip {
             Arc::new(gossip.clone()),
         );
 
+        let initiate_task =
+            spawn_initiate_task(gossip.config.clone(), gossip.clone());
+        gossip._initiate_task = Arc::new(Some(DropAbortHandle {
+            name: "Gossip initiate task".to_string(),
+            handle: initiate_task,
+        }));
+        let timeout_task =
+            spawn_timeout_task(gossip.config.clone(), gossip.clone());
+        gossip._timeout_task = Arc::new(Some(DropAbortHandle {
+            name: "Gossip timeout task".to_string(),
+            handle: timeout_task,
+        }));
+
         gossip
     }
 }
 
 impl K2Gossip {
-    // TODO dead code until the initiate task is created
-    #[allow(dead_code)]
     pub(crate) async fn initiate_gossip(
         &self,
-        target: AgentId,
+        target_peer_url: Url,
     ) -> K2Result<bool> {
         let state = self.initiated_round_state.clone();
         let mut initiated_lock = state.lock().await;
@@ -198,26 +216,16 @@ impl K2Gossip {
             return Ok(false);
         }
 
-        let Some(target_url) = self
-            .peer_store
-            .get(target.clone())
-            .await?
-            .and_then(|t| t.url.clone())
-        else {
-            tracing::info!("initiate_gossip: target not found: {:?}", target);
-            return Ok(false);
-        };
-
         let (our_agents, our_arc_set) = self.local_agent_state().await?;
 
         let new_since = self
             .peer_meta_store
-            .new_ops_bookmark(target_url.clone())
+            .new_ops_bookmark(target_peer_url.clone())
             .await?
             .unwrap_or(UNIX_TIMESTAMP);
 
         let round_state =
-            GossipRoundState::new(target_url.clone(), our_agents.clone());
+            GossipRoundState::new(target_peer_url.clone(), our_agents.clone());
         let initiate = K2GossipInitiateMessage {
             session_id: round_state.session_id.clone(),
             participating_agents: encode_agent_ids(our_agents),
@@ -234,17 +242,21 @@ impl K2Gossip {
             .accepted_round_states
             .lock()
             .await
-            .contains_key(&target_url)
+            .contains_key(&target_peer_url)
         {
             tracing::info!("initiate_gossip: already accepted");
             return Ok(false);
         }
 
-        tracing::trace!("Initiate gossip with {:?}: {:?}", target, initiate);
+        tracing::trace!(
+            "Initiate gossip with {:?}: {:?}",
+            target_peer_url,
+            initiate
+        );
 
         send_gossip_message(
             &self.response_tx,
-            target_url,
+            target_peer_url,
             GossipMessage::Initiate(initiate),
         )?;
         *initiated_lock = Some(round_state);
@@ -295,8 +307,8 @@ impl K2Gossip {
                             K2Error::other("could not calculate elapsed time")
                         })?;
 
-                    if elapsed < self.config.interval() {
-                        tracing::info!("peer {:?} attempted to initiate too soon {:?} < {:?}", from_peer, elapsed, self.config.interval());
+                    if elapsed < self.config.min_initiate_interval() {
+                        tracing::info!("peer {:?} attempted to initiate too soon {:?} < {:?}", from_peer, elapsed, self.config.min_initiate_interval());
                         return Err(K2Error::other("initiate too soon"));
                     }
                 }
@@ -753,8 +765,7 @@ mod test {
                         .iter()
                         .any(|a| a.agent.clone() == agent_id)
                     {
-                        tokio::time::sleep(std::time::Duration::from_millis(5))
-                            .await;
+                        tokio::time::sleep(Duration::from_millis(5)).await;
                     }
                 }
             })
@@ -765,7 +776,7 @@ mod test {
         }
 
         async fn wait_for_agent_in_peer_store(&self, agent: AgentId) {
-            tokio::time::timeout(std::time::Duration::from_millis(100), {
+            tokio::time::timeout(Duration::from_millis(100), {
                 let this = self.clone();
                 async move {
                     loop {
@@ -942,7 +953,7 @@ mod test {
         harness_2.join_local_agent().await;
         harness_2
             .peer_store
-            .insert(vec![agent_info_1])
+            .insert(vec![agent_info_1.clone()])
             .await
             .unwrap();
 
@@ -966,7 +977,7 @@ mod test {
 
         harness_2
             .gossip
-            .initiate_gossip(agent_1.agent().clone())
+            .initiate_gossip(agent_info_1.url.clone().unwrap())
             .await
             .unwrap();
 
@@ -993,6 +1004,12 @@ mod test {
             .process_incoming_ops(vec![op_1.clone().into()])
             .await
             .unwrap();
+        let agent_info_1 = harness_1
+            .peer_store
+            .get(agent_1.agent().clone())
+            .await
+            .unwrap()
+            .unwrap();
 
         let harness_2 = factory.new_instance().await;
         harness_2.join_local_agent().await;
@@ -1006,7 +1023,7 @@ mod test {
 
         harness_2
             .gossip
-            .initiate_gossip(agent_1.agent().clone())
+            .initiate_gossip(agent_info_1.url.clone().unwrap())
             .await
             .unwrap();
 
