@@ -71,6 +71,27 @@ impl BootstrapFactory for CoreBootstrapFactory {
         config.set_module_config(&CoreBootstrapModConfig::default())
     }
 
+    fn validate_config(
+        &self,
+        config: &kitsune2_api::config::Config,
+    ) -> K2Result<()> {
+        const ERR: &str = "invalid bootstrap server_url";
+
+        let config: CoreBootstrapModConfig = config.get_module_config()?;
+
+        let url = url::Url::parse(&config.core_bootstrap.server_url)
+            .map_err(|e| K2Error::other_src(ERR, e))?;
+
+        if url.cannot_be_a_base() {
+            return Err(K2Error::other(ERR));
+        }
+
+        match url.scheme() {
+            "http" | "https" => Ok(()),
+            _ => Err(K2Error::other(ERR)),
+        }
+    }
+
     fn create(
         &self,
         builder: Arc<builder::Builder>,
