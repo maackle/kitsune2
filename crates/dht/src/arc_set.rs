@@ -154,6 +154,22 @@ impl ArcSet {
         self.inner.contains(&value)
     }
 
+    /// Remove the given sector indices from this arc set.
+    ///
+    /// Note that this is a mutable operation, which is normally not needed for arc sets. This
+    /// function therefore consumes the provided arc set to make it harder to accidentally modify
+    /// an arc set that wasn't intended to be updated.
+    pub fn without_sector_indices(
+        mut self,
+        remove: impl IntoIterator<Item = u32>,
+    ) -> Self {
+        for sector in remove {
+            self.inner.remove(&sector);
+        }
+
+        self
+    }
+
     /// Convert an arc set to a list of arcs.
     ///
     /// Note that an [ArcSet] is created from a `Vec<DhtArc>`, so if you have just created an
