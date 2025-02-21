@@ -1,5 +1,7 @@
 fn main() {
-    std::env::set_var("OUT_DIR", "../api/proto/gen");
+    unsafe {
+        std::env::set_var("OUT_DIR", "../api/proto/gen");
+    }
     prost_build::Config::new()
         .bytes(["."])
         .compile_protos(
@@ -14,7 +16,9 @@ fn main() {
             &["../api/proto/"],
         )
         .expect("Failed to compile api protobuf protocol files");
-    std::env::set_var("OUT_DIR", "../gossip/proto/gen");
+    unsafe {
+        std::env::set_var("OUT_DIR", "../gossip/proto/gen");
+    }
     prost_build::Config::new()
         .bytes(["."])
         .compile_protos(
