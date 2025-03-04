@@ -57,6 +57,20 @@ pub type DynKitsuneHandler = Arc<dyn KitsuneHandler>;
 
 /// The top-level Kitsune2 api trait.
 pub trait Kitsune: 'static + Send + Sync + std::fmt::Debug {
+    /// Register the kitsune handler exactly once before invoking any other
+    /// api functions.
+    ///
+    /// This dependency injection strategy makes it possible for a struct
+    /// to both act as a Handler and contain the resulting Kitsune instance.
+    ///
+    /// Implementations should error if this is invoked more that once,
+    /// and should return errors for any other api invocations if this has
+    /// not yet been called.
+    fn register_handler(
+        &self,
+        handler: DynKitsuneHandler,
+    ) -> BoxFut<'_, K2Result<()>>;
+
     /// Get an existing space with the provided [SpaceId] or create
     /// a new one.
     fn space(&self, space: SpaceId) -> BoxFut<'_, K2Result<space::DynSpace>>;
@@ -78,7 +92,6 @@ pub trait KitsuneFactory: 'static + Send + Sync + std::fmt::Debug {
     fn create(
         &self,
         builder: Arc<builder::Builder>,
-        handler: DynKitsuneHandler,
     ) -> BoxFut<'static, K2Result<DynKitsune>>;
 }
 
