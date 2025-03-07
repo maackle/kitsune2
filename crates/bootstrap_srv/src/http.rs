@@ -60,6 +60,7 @@ pub struct Server {
     addrs: Vec<std::net::SocketAddr>,
     receiver: HttpReceiver,
     h_send: HSend,
+    tls_reload_handle: Option<tokio::task::AbortHandle>,
     shutdown: Option<axum_server::Handle>,
 }
 
@@ -71,6 +72,9 @@ impl Drop for Server {
         }
         if let Some(t_join) = self.t_join.take() {
             let _ = t_join.join();
+        }
+        if let Some(tls_reload_handle) = self.tls_reload_handle.take() {
+            tls_reload_handle.abort();
         }
     }
 }
@@ -89,12 +93,14 @@ impl Server {
                 h_send,
                 addrs,
                 receiver,
+                tls_reload_handle,
                 shutdown,
             })) => Ok(Self {
                 t_join: Some(t_join),
                 addrs,
                 receiver,
                 h_send,
+                tls_reload_handle,
                 shutdown: Some(shutdown),
             }),
             Ok(Err(err)) => Err(err),
@@ -115,6 +121,7 @@ struct Ready {
     h_send: HSend,
     addrs: Vec<std::net::SocketAddr>,
     receiver: HttpReceiver,
+    tls_reload_handle: Option<tokio::task::AbortHandle>,
     shutdown: axum_server::Handle,
 }
 
@@ -150,6 +157,19 @@ fn tokio_thread(
                 None
             } else {
                 Some(sbd_server::CSlot::new(sbd_config.clone(), ip_rate.clone()))
+            };
+
+            let (rustls_config, tls_reload_handle) = if let Some(tls_config) = server_config.tls_config {
+                let rustls_config = tls_config
+                    .create_tls_config()
+                    .await
+                    .expect("Failed to create TLS config");
+
+                let tls_reload_handle = tokio::task::spawn(tls_config.reload_task(rustls_config.clone())).abort_handle();
+
+                (Some(rustls_config), Some(tls_reload_handle))
+            } else {
+                (None, None)
             };
 
             let app = Router::<AppState>::new()
@@ -218,13 +238,8 @@ fn tokio_thread(
 
                 let app = app.clone();
                 let shutdown_handle = shutdown_handle.clone();
-                if let Some(tls_config) = &server_config.tls_config {
-                    let tls_config = tls_config
-                        .create_tls_config()
-                        .await
-                        .expect("Failed to create TLS config");
-
-                    let acceptor = RustlsAcceptor::new(tls_config);
+                if let Some(tls_config) = &rustls_config {
+                    let acceptor = RustlsAcceptor::new(tls_config.clone());
 
                     let acceptor = {
                         acceptor.acceptor(crate::sbd::SbdAcceptor::new(
@@ -265,6 +280,7 @@ fn tokio_thread(
                     h_send,
                     addrs,
                     receiver,
+                    tls_reload_handle,
                     shutdown: shutdown_handle,
                 }))
                 .is_err()
