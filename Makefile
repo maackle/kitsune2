@@ -2,7 +2,7 @@
 # tasks both in automation and locally until we figure out better
 # release automation tools.
 
-.PHONY: all static-toml fmt clippy doc build test
+.PHONY: all static-toml fmt clippy doc build test proto publish-all bump
 
 all: static-toml fmt clippy doc build test
 
@@ -37,3 +37,13 @@ publish-all:
 	cargo publish -p kitsune2_gossip
 	cargo publish -p kitsune2
 	cargo publish -p kitsune2_showcase
+	export VER="v$$(grep version ./Cargo.toml | head -1 | cut -d ' ' -f 3 | cut -d \" -f 2)" && \
+		git tag -a "$${VER}" -m "$${VER}" && \
+		git push --tags;
+
+bump:
+	@if [ "$(ver)x" = "x" ]; then \
+		echo "USAGE: make bump ver=0.0.1-alpha8"; \
+		exit 1; \
+	fi
+	sed -i 's/^\(kitsune2[^=]*= { \|\)version = "[^"]*"/\1version = "$(ver)"/g' ./Cargo.toml
