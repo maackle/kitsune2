@@ -1,7 +1,7 @@
 [package]
 name = "kitsune2_test_utils"
 description = "Test utilities for kitsune2"
-version = "0.1.0-nopublish"
+version.workspace = true
 publish = false
 edition.workspace = true
 

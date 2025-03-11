@@ -28,12 +28,12 @@ proto:
 	cd crates/tool_proto_build && cargo run
 
 publish-all:
-	cargo publish -p kitsune2_api
-	cargo publish -p kitsune2_bootstrap_srv
-	cargo publish -p kitsune2_bootstrap_client
-	cargo publish -p kitsune2_core
-	cargo publish -p kitsune2_transport_tx5
-	cargo publish -p kitsune2_dht
+	#cargo publish -p kitsune2_api
+	#cargo publish -p kitsune2_bootstrap_srv
+	#cargo publish -p kitsune2_bootstrap_client
+	#cargo publish -p kitsune2_core
+	#cargo publish -p kitsune2_transport_tx5
+	#cargo publish -p kitsune2_dht
 	cargo publish -p kitsune2_gossip
 	cargo publish -p kitsune2
 	cargo publish -p kitsune2_showcase

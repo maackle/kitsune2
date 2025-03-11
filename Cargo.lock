@@ -1528,7 +1528,7 @@ dependencies = [
 
 [[package]]
 name = "kitsune2_test_utils"
-version = "0.1.0-nopublish"
+version = "0.0.1-alpha8"
 dependencies = [
  "axum",
  "bytes",
@@ -2914,7 +2914,7 @@ dependencies = [
 
 [[package]]
 name = "tool_proto_build"
-version = "0.0.0-nopublish"
+version = "0.0.1-alpha8"
 dependencies = [
  "prost-build",
 ]
