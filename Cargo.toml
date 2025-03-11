@@ -113,7 +113,7 @@ prost-build = "0.13.3"
 # --- dev-dependencies ---
 kitsune2_bootstrap_srv = { version = "0.0.1-alpha8", path = "crates/bootstrap_srv" }
 kitsune2_core = { version = "0.0.1-alpha8", path = "crates/core" }
-kitsune2_test_utils = { version = "0.0.1-alpha8", path = "crates/test_utils" }
+kitsune2_test_utils = { path = "crates/test_utils" }
 
 # used to test the bootstrap server with SBD enabled
 sbd-client = "0.0.10-alpha2"
