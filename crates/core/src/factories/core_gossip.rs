@@ -1,4 +1,5 @@
 use kitsune2_api::*;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -57,6 +58,20 @@ impl Gossip for CoreGossipStub {
         Box::pin(async move {
             drop(ops);
             Ok(())
+        })
+    }
+
+    fn get_state_summary(
+        &self,
+        _request: GossipStateSummaryRequest,
+    ) -> BoxFut<'_, K2Result<GossipStateSummary>> {
+        Box::pin(async move {
+            Ok(GossipStateSummary {
+                initiated_round: None,
+                accepted_rounds: Vec::with_capacity(0),
+                dht_summary: HashMap::with_capacity(0),
+                peer_meta: HashMap::with_capacity(0),
+            })
         })
     }
 }

@@ -364,6 +364,13 @@ impl Gossip for K2Gossip {
             async move { self.dht.write().await.inform_ops_stored(ops).await },
         )
     }
+
+    fn get_state_summary(
+        &self,
+        request: GossipStateSummaryRequest,
+    ) -> BoxFut<'_, K2Result<GossipStateSummary>> {
+        Box::pin(async move { self.summary(request.include_dht_summary).await })
+    }
 }
 
 impl TxBaseHandler for K2Gossip {}
@@ -424,7 +431,7 @@ mod test {
 
     #[derive(Debug, Clone)]
     struct GossipTestHarness {
-        _gossip: DynGossip,
+        gossip: DynGossip,
         peer_store: DynPeerStore,
         op_store: DynOpStore,
         space: DynSpace,
@@ -607,7 +614,7 @@ mod test {
                 K2PeerMetaStore::new(space.peer_meta_store().clone());
 
             GossipTestHarness {
-                _gossip: space.gossip().clone(),
+                gossip: space.gossip().clone(),
                 peer_store: space.peer_store().clone(),
                 op_store: space.op_store().clone(),
                 space,
@@ -1114,5 +1121,47 @@ mod test {
             .await
             .unwrap();
         assert_eq!(7, all_ops.len());
+    }
+
+    #[tokio::test]
+    async fn check_summary_after_round() {
+        enable_tracing();
+
+        let space = TEST_SPACE_ID;
+        let factory =
+            TestGossipFactory::create(space.clone(), true, None).await;
+        let harness_1 = factory.new_instance().await;
+        harness_1.join_local_agent(DhtArc::FULL).await;
+
+        let harness_2 = factory.new_instance().await;
+        let local_agent_2 = harness_2.join_local_agent(DhtArc::FULL).await;
+        let op_2 = MemoryOp::new(Timestamp::now(), vec![2; 128]);
+        let op_id_2 = op_2.compute_op_id();
+        harness_2
+            .op_store
+            .process_incoming_ops(vec![op_2.clone().into()])
+            .await
+            .unwrap();
+
+        let received_ops = harness_1.wait_for_ops(vec![op_id_2]).await;
+        assert_eq!(1, received_ops.len());
+        assert_eq!(op_2, received_ops[0]);
+
+        let summary = harness_1
+            .gossip
+            .get_state_summary(GossipStateSummaryRequest {
+                include_dht_summary: true,
+            })
+            .await
+            .unwrap();
+
+        assert!(summary.dht_summary.contains_key("0..4294967295"));
+        let meta = summary
+            .peer_meta
+            .get(&local_agent_2.url.clone().unwrap())
+            .cloned()
+            .unwrap();
+
+        assert!(meta.completed_rounds.unwrap() > 0);
     }
 }

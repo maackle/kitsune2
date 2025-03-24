@@ -18,5 +18,6 @@ mod protocol;
 mod respond;
 mod state;
 mod storage_arc;
+mod summary;
 mod timeout;
 mod update;
