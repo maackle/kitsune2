@@ -41,6 +41,21 @@ pub struct K2GossipConfig {
     /// Default: 120,000 (2m)
     pub initiate_interval_ms: u32,
 
+    /// How much jitter to add to the `initiate_interval_ms`.
+    ///
+    /// Gossip is asymmetric, so between a pair of nodes, one node should not always be the
+    /// initiator. To make the initiation time unpredictable, we add some jitter to the initiate
+    /// interval. Over time, this will naturally vary which node initiates a gossip round when
+    /// two peers would otherwise want to initiate a round at the same time.
+    ///
+    /// The jitter is added to the `initiate_interval_ms` and is a random value between `0` and
+    /// `initiate_jitter_ms`.
+    ///
+    /// This parameter can be set to `0` to disable jitter.
+    ///
+    /// Default: 10,000 (10s)
+    pub initiate_jitter_ms: u32,
+
     /// The minimum amount of time that must be allowed to pass before a gossip round can be
     /// initiated by a given peer.
     ///
@@ -84,6 +99,7 @@ impl Default for K2GossipConfig {
             max_gossip_op_bytes: 100 * 1024 * 1024,
             max_request_gossip_op_bytes: 100 * 1024 * 1024,
             initiate_interval_ms: 120_000,
+            initiate_jitter_ms: 10_000,
             min_initiate_interval_ms: 300_000,
             round_timeout_ms: 60_000,
             max_concurrent_accepted_rounds: 10,
