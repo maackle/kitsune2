@@ -1,8 +1,13 @@
 [package]
 name = "kitsune2_test_utils"
-description = "Test utilities for kitsune2"
 version.workspace = true
-publish = false
+description = "Test utilities for kitsune2"
+license.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/kitsune2_test_utils"
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
 edition.workspace = true
 
 [dependencies]
