@@ -278,7 +278,7 @@ mod test {
         // this test will never fail,
         // but we can check it traces correctly manually
 
-        kitsune2_test_utils::enable_tracing();
+        enable_tracing();
 
         let c = Config::default();
         c.set_module_config(&serde_json::json!({"apples": "red"}))
@@ -295,7 +295,7 @@ mod test {
         // this test will never fail,
         // but we can check it traces correctly manually
 
-        kitsune2_test_utils::enable_tracing();
+        enable_tracing();
 
         let c = Config::default();
         c.set_module_config(&serde_json::json!({"apples": "red"}))
@@ -360,5 +360,16 @@ mod test {
         .unwrap();
 
         assert_eq!(99, update.load(Ordering::SeqCst));
+    }
+
+    fn enable_tracing() {
+        let _ = tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::builder()
+                    .with_default_directive(tracing::Level::DEBUG.into())
+                    .from_env_lossy(),
+            )
+            .try_init();
     }
 }
