@@ -1,10 +1,11 @@
 //! Functional test harness for K2Gossip.
 
+use crate::harness::op_store::K2GossipMemOpStoreFactory;
 use crate::peer_meta_store::K2PeerMetaStore;
 use crate::{K2GossipConfig, K2GossipFactory, K2GossipModConfig};
 use kitsune2_api::{
-    AgentId, AgentInfoSigned, Builder, DhtArc, DynGossip, DynSpace, LocalAgent,
-    OpId, SpaceHandler, SpaceId, TxBaseHandler, TxHandler, TxSpaceHandler,
+    AgentId, AgentInfoSigned, DhtArc, DynGossip, DynSpace, LocalAgent, OpId,
+    SpaceHandler, SpaceId, StoredOp, TxBaseHandler, TxHandler, TxSpaceHandler,
     UNIX_TIMESTAMP,
 };
 use kitsune2_core::factories::MemoryOp;
@@ -13,6 +14,11 @@ use kitsune2_test_utils::noop_bootstrap::NoopBootstrapFactory;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::task::AbortHandle;
+
+mod op_store;
+
+pub use op_store::{GossipOpStore, MemoryOpRecord};
 
 /// A functional test harness for K2Gossip.
 ///
@@ -23,8 +29,23 @@ pub struct K2GossipFunctionalTestHarness {
     pub gossip: DynGossip,
     /// The space instance.
     pub space: DynSpace,
+    /// The op store instance.
+    ///
+    /// This can be used to author data directly to the op store.
+    pub op_store: GossipOpStore,
     /// The peer meta store.
     pub peer_meta_store: Arc<K2PeerMetaStore>,
+    /// The abort handle for the process task.
+    ///
+    /// This simulates the process of checking incoming ops and adding them to the DHT model.
+    pub process_abort_handle: AbortHandle,
+}
+
+impl Drop for K2GossipFunctionalTestHarness {
+    fn drop(&mut self) {
+        // Abort the process task
+        self.process_abort_handle.abort();
+    }
 }
 
 impl K2GossipFunctionalTestHarness {
@@ -163,6 +184,8 @@ impl K2GossipFunctionalTestHarness {
                     .into_iter()
                     .collect::<HashSet<_>>();
 
+                let our_stored_op_ids = our_op_ids.clone();
+
                 our_op_ids.extend(
                     this.space
                         .fetch()
@@ -188,6 +211,8 @@ impl K2GossipFunctionalTestHarness {
                     .into_iter()
                     .collect::<HashSet<_>>();
 
+                let other_stored_op_ids = other_op_ids.clone();
+
                 other_op_ids.extend(
                     other
                         .space
@@ -201,14 +226,17 @@ impl K2GossipFunctionalTestHarness {
                 );
 
                 if our_op_ids == other_op_ids {
+                    tracing::info!("Both peers now know about {} op ids", our_op_ids.len());
                     break;
+                } else {
+                    tracing::info!("Waiting for op ids to be discovered: {} != {}. Have stored {}/{} and {}/{}", our_op_ids.len(), other_op_ids.len(), our_stored_op_ids.len(), our_op_ids.len(), other_stored_op_ids.len(), other_op_ids.len());
                 }
 
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
         })
-        .await
-        .expect("Timed out waiting for instances to sync");
+            .await
+            .expect("Timed out waiting for ops to be discovered");
     }
 
     /// Wait for two instances to sync their op stores.
@@ -285,7 +313,7 @@ impl K2GossipFunctionalTestHarness {
         local_agent.invoke_cb();
 
         // Wait for the agent info to be published
-        tokio::time::timeout(std::time::Duration::from_secs(5), {
+        tokio::time::timeout(Duration::from_secs(5), {
             let peer_store = self.space.peer_store().clone();
             let agent_id = agent_id.clone();
             async move {
@@ -301,7 +329,7 @@ impl K2GossipFunctionalTestHarness {
                         break;
                     }
 
-                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    tokio::time::sleep(Duration::from_millis(5)).await;
                 }
             }
         }).await.expect("Timed out waiting for agent to be in peer store with the requested arc");
@@ -320,8 +348,10 @@ impl K2GossipFunctionalTestHarness {
 pub struct K2GossipFunctionalTestFactory {
     /// The space ID to use for the test.
     space_id: SpaceId,
-    /// The builder for creating new instances.
-    builder: Arc<Builder>,
+    /// Whether bootstrap is enabled.
+    bootstrap: bool,
+    /// The Kitsune2 configuration to use.
+    config: K2GossipModConfig,
 }
 
 impl K2GossipFunctionalTestFactory {
@@ -331,17 +361,10 @@ impl K2GossipFunctionalTestFactory {
         bootstrap: bool,
         config: Option<K2GossipConfig>,
     ) -> K2GossipFunctionalTestFactory {
-        let mut builder = default_test_builder().with_default_config().unwrap();
-        // Replace the core builder with a real gossip factory
-        builder.gossip = K2GossipFactory::create();
-
-        if !bootstrap {
-            builder.bootstrap = Arc::new(NoopBootstrapFactory);
-        }
-
-        builder
-            .config
-            .set_module_config(&K2GossipModConfig {
+        K2GossipFunctionalTestFactory {
+            space_id: space,
+            bootstrap,
+            config: K2GossipModConfig {
                 k2_gossip: if let Some(config) = config {
                     config
                 } else {
@@ -353,14 +376,7 @@ impl K2GossipFunctionalTestFactory {
                         ..Default::default()
                     }
                 },
-            })
-            .unwrap();
-
-        let builder = Arc::new(builder);
-
-        K2GossipFunctionalTestFactory {
-            space_id: space,
-            builder,
+            },
         }
     }
 
@@ -373,18 +389,33 @@ impl K2GossipFunctionalTestFactory {
         impl TxSpaceHandler for NoopHandler {}
         impl SpaceHandler for NoopHandler {}
 
-        let transport = self
-            .builder
+        let mut builder = default_test_builder().with_default_config().unwrap();
+        // Replace the core builder with a real gossip factory
+        builder.gossip = K2GossipFactory::create();
+
+        if !self.bootstrap {
+            builder.bootstrap = Arc::new(NoopBootstrapFactory);
+        }
+
+        let op_store: GossipOpStore = Default::default();
+        builder.op_store = Arc::new(K2GossipMemOpStoreFactory {
+            store: op_store.clone(),
+        });
+
+        builder.config.set_module_config(&self.config).unwrap();
+
+        let builder = Arc::new(builder);
+
+        let transport = builder
             .transport
-            .create(self.builder.clone(), Arc::new(NoopHandler))
+            .create(builder.clone(), Arc::new(NoopHandler))
             .await
             .unwrap();
 
-        let space = self
-            .builder
+        let space = builder
             .space
             .create(
-                self.builder.clone(),
+                builder.clone(),
                 Arc::new(NoopHandler),
                 self.space_id.clone(),
                 transport.clone(),
@@ -395,10 +426,55 @@ impl K2GossipFunctionalTestFactory {
         let peer_meta_store =
             K2PeerMetaStore::new(space.peer_meta_store().clone());
 
+        let process_abort_handle = tokio::task::spawn({
+            let op_store = op_store.clone();
+            let space = space.clone();
+
+            async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+
+                    let new_ops = op_store
+                        .read()
+                        .await
+                        .op_list
+                        .iter()
+                        .filter_map(|(op_id, op)| {
+                            if !op.processed {
+                                Some(StoredOp {
+                                    op_id: op_id.clone(),
+                                    created_at: op.created_at,
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
+                    if new_ops.is_empty() {
+                        continue;
+                    }
+
+                    space.inform_ops_stored(new_ops.clone()).await.unwrap();
+
+                    let mut write_lock = op_store.write().await;
+                    for op in new_ops {
+                        if let Some(op) = write_lock.op_list.get_mut(&op.op_id)
+                        {
+                            op.processed = true;
+                        }
+                    }
+                }
+            }
+        })
+        .abort_handle();
+
         K2GossipFunctionalTestHarness {
             gossip: space.gossip().clone(),
             space,
+            op_store,
             peer_meta_store: Arc::new(peer_meta_store),
+            process_abort_handle,
         }
     }
 }

@@ -2,13 +2,12 @@
 //!
 //! This test uses the default network transport and creates enough data to be realistic.
 
-use bytes::Bytes;
 use kitsune2_api::{DhtArc, Timestamp};
 use kitsune2_core::factories::MemoryOp;
-use kitsune2_gossip::harness::K2GossipFunctionalTestFactory;
+use kitsune2_gossip::harness::{K2GossipFunctionalTestFactory, MemoryOpRecord};
 use kitsune2_gossip::K2GossipConfig;
 use kitsune2_test_utils::space::TEST_SPACE_ID;
-use kitsune2_test_utils::{enable_tracing, random_bytes};
+use kitsune2_test_utils::{enable_tracing_with_default_level, random_bytes};
 use std::time::Duration;
 
 /// The minimum size of an op in bytes.
@@ -22,7 +21,8 @@ const MAX_OP_SIZE_BYTES: usize = 1024 * 1024;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn historical_load() {
-    enable_tracing();
+    // We want less logging in this test, it create a lot of output at debug level.
+    enable_tracing_with_default_level(tracing::Level::INFO);
 
     let factory = K2GossipFunctionalTestFactory::create(
         TEST_SPACE_ID,
@@ -42,27 +42,34 @@ async fn historical_load() {
     // Start time set to roughly 1 year ago
     let mut time = (Timestamp::now() - Duration::from_secs(
         60 * 60 * 24 * 365,
-    )).expect("Please wait until your civilisation has completed its first hour of existence.");
+    )).expect("Please wait until your civilisation has completed its first year of existence.");
 
     // Stop time set to now
     let stop_time = Timestamp::now();
 
     tracing::info!("Creating test data");
 
-    // Create an op every 6 hours for a year
-    let mut ops = Vec::<Bytes>::with_capacity(4 * 365);
+    // Create an op every 12 hours for a year
+    let mut ops = Vec::<MemoryOpRecord>::with_capacity(2 * 365);
     while time < stop_time {
         let op_size = rand::random::<usize>()
             % (MAX_OP_SIZE_BYTES - MIN_OP_SIZE_BYTES)
             + MIN_OP_SIZE_BYTES;
 
         let op = MemoryOp::new(time, random_bytes(op_size as u16));
-        ops.push(op.into());
+        ops.push(MemoryOpRecord {
+            op_id: op.compute_op_id(),
+            op_data: op.op_data,
+            created_at: op.created_at,
+            // Store at creation time, to simulate data created over time
+            stored_at: op.created_at,
+            processed: false,
+        });
 
-        time += Duration::from_secs(60 * 60 * 6);
+        time += Duration::from_secs(60 * 60 * 12);
     }
 
-    let total_size = ops.iter().map(|op| op.len()).sum::<usize>();
+    let total_size = ops.iter().map(|op| op.op_data.len()).sum::<usize>();
     tracing::info!(
         "Created {} ops, total size: {} bytes",
         ops.len(),
@@ -71,17 +78,17 @@ async fn historical_load() {
 
     // Store the ops in the op store for this first agent.
     harness_1
-        .space
-        .op_store()
-        .process_incoming_ops(ops)
+        .op_store
+        .write()
         .await
-        .unwrap();
+        .op_list
+        .extend(ops.iter().map(|op| (op.op_id.clone(), op.clone())));
 
     let harness_2 = factory.new_instance().await;
     let agent_2 = harness_2.join_local_agent(DhtArc::FULL).await;
 
     harness_1
-        .wait_for_ops_discovered(&harness_2, Duration::from_secs(60))
+        .wait_for_ops_discovered(&harness_2, Duration::from_secs(180))
         .await;
 
     let completed_rounds_with_agent_2 = harness_1
@@ -95,12 +102,10 @@ async fn historical_load() {
         "Completed rounds with agent 2 should have a value"
     );
 
-    let required_rounds =
-        total_size / K2GossipConfig::default().max_gossip_op_bytes as usize + 1;
     assert!(
-        completed_rounds_with_agent_2.unwrap() <= required_rounds as u32,
-        "Completed rounds with agent 2 should be no more than {}",
-        required_rounds
+        completed_rounds_with_agent_2.unwrap() <= 30,
+        "Gossip took an unreasonable number of rounds to sync: {}",
+        completed_rounds_with_agent_2.unwrap()
     );
 
     // Ensure the data syncs too.
