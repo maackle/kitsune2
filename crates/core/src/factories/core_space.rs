@@ -7,18 +7,21 @@ use std::sync::{Arc, RwLock, Weak};
 mod config {
     /// Configuration parameters for [CoreSpaceFactory](super::CoreSpaceFactory).
     #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(rename_all = "camelCase")]
     pub struct CoreSpaceConfig {
         /// The interval in millis at which we check for about to expire
         /// local agent infos.
         ///
         /// Default: 60s.
+        #[cfg_attr(feature = "schema", schemars(default))]
         pub re_sign_freq_ms: u32,
 
         /// The time in millis before an agent info expires, after which we will
-        /// re sign them.
+        /// re-sign them.
         ///
         /// Default: 5m.
+        #[cfg_attr(feature = "schema", schemars(default))]
         pub re_sign_expire_time_ms: u32,
     }
 
@@ -45,6 +48,7 @@ mod config {
 
     /// Module-level configuration for CoreSpace.
     #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(rename_all = "camelCase")]
     pub struct CoreSpaceModConfig {
         /// CoreSpace configuration.

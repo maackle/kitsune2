@@ -40,27 +40,40 @@ impl SigUrlExt for &str {
 
 /// Tx5Transport configuration types.
 pub mod config {
+    use tx5::WebRtcConfig;
+
     /// Configuration parameters for [Tx5TransportFactory](super::Tx5TransportFactory).
     #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(rename_all = "camelCase")]
     pub struct Tx5TransportConfig {
         /// Allow connecting to plaintext (ws) signal server
         /// instead of the default requiring TLS (wss).
         ///
         /// Default: false.
+        #[cfg_attr(feature = "schema", schemars(default))]
         pub signal_allow_plain_text: bool,
 
         /// The url of the sbd signal server. E.g. `wss://sbd.kitsu.ne`.
         pub server_url: String,
 
         /// The internal time in seconds to use as a maximum for operations,
-        /// connecting, and idleing. (Default: 60s).
+        /// connecting, and idleing.
+        ///
+        /// Default: 60s.
+        #[cfg_attr(feature = "schema", schemars(default))]
         pub timeout_s: u32,
 
         /// WebRTC peer connection config.
         ///
-        /// Passed directly to the current WebRTC backend without further processing.
-        pub webrtc_config: serde_json::Value,
+        /// Configuration passed to the selected networking implementation.
+        ///
+        /// Although the default configuration for this is empty, and that is a valid configuration,
+        /// it is recommended to provide ICE servers.
+        ///
+        /// Default: empty configuration
+        #[cfg_attr(feature = "schema", schemars(default))]
+        pub webrtc_config: WebRtcConfig,
     }
 
     impl Default for Tx5TransportConfig {
@@ -69,13 +82,17 @@ pub mod config {
                 signal_allow_plain_text: false,
                 server_url: "<wss://your.sbd.url>".into(),
                 timeout_s: 60,
-                webrtc_config: serde_json::json!({}),
+                webrtc_config: WebRtcConfig {
+                    ice_servers: vec![],
+                    ice_transport_policy: Default::default(),
+                },
             }
         }
     }
 
     /// Module-level configuration for Tx5Transport.
     #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(rename_all = "camelCase")]
     pub struct Tx5TransportModConfig {
         /// Tx5Transport configuration.
@@ -84,6 +101,7 @@ pub mod config {
 }
 
 pub use config::*;
+pub use tx5::{IceServers, WebRtcConfig};
 
 /// Provides a Kitsune2 transport module based on the Tx5 crate.
 #[derive(Debug)]
@@ -206,10 +224,7 @@ impl Tx5Transport {
             backend_module_config: Some(
                 tx5::backend::BackendModule::LibDataChannel.default_config(),
             ),
-            initial_webrtc_config: serde_json::to_string(&config.webrtc_config)
-                .map_err(|e| {
-                    K2Error::other_src("failed to serialize webrtc config", e)
-                })?,
+            initial_webrtc_config: config.webrtc_config,
             ..Default::default()
         });
 
