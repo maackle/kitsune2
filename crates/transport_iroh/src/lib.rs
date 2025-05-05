@@ -216,7 +216,7 @@ impl TxImp for IrohTransport {
             };
             let mut connections = self.connections.lock().await;
             if let Some(connection) = connections.get(&addr) {
-                connection.close(VarInt::from_u32(0), &[]);
+                connection.close(VarInt::from_u32(0), b"disconnected");
                 connections.remove(&addr);
             }
             ()
@@ -337,6 +337,7 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
                 tracing::error!("Remote node id error");
                 return;
             };
+            connection.closed().await;
             // connection.close(VarInt::from_u32(0), b"aa");
 
             let Some(remote_info) = endpoint.remote_info(node_id) else {
