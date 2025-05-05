@@ -326,6 +326,10 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
                 tracing::error!("Read to end error");
                 return;
             };
+            let Ok(()) = recv.stop(VarInt::from_u32(0)) else {
+                tracing::error!("Stop");
+                return;
+            };
             let Ok(node_id) = connection.remote_node_id() else {
                 tracing::error!("Remote node id error");
                 return;
