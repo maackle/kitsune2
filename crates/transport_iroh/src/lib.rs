@@ -231,20 +231,17 @@ impl TxImp for IrohTransport {
 
             let mut connections = self.connections.lock().await;
 
-            if !connections.contains_key(&addr) {
-                let connection = self
-                    .endpoint
-                    .connect(addr.clone(), ALPN)
-                    .await
-                    .map_err(|err| {
-                        K2Error::other(format!("failed to connect: {err:?}"))
-                    })?;
-                connections.insert(addr.clone(), connection);
-            }
+            // if !connections.contains_key(&addr) {
+            let connection =
+                self.endpoint.connect(addr.clone(), ALPN).await.map_err(
+                    |err| K2Error::other(format!("failed to connect: {err:?}")),
+                )?;
+            //     connections.insert(addr.clone(), connection);
+            // }
 
-            let Some(connection) = connections.get(&addr) else {
-                return Err(K2Error::other("no connection with peer"));
-            };
+            // let Some(connection) = connections.get(&addr) else {
+            //     return Err(K2Error::other("no connection with peer"));
+            // };
 
             let mut send = match connection.open_uni().await {
                 Ok(s) => s,
@@ -276,7 +273,7 @@ impl TxImp for IrohTransport {
             // send.stopped()
             //     .await
             //     .map_err(|err| K2Error::other("Failed to stop stream"))?;
-            // connection.close(VarInt::from_u32(0), &[]);
+            connection.closed().await;
             Ok(())
         })
     }
@@ -337,7 +334,6 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
                 tracing::error!("Remote node id error");
                 return;
             };
-            connection.closed().await;
             // connection.close(VarInt::from_u32(0), b"aa");
 
             let Some(remote_info) = endpoint.remote_info(node_id) else {
@@ -359,6 +355,7 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
                 tracing::error!("recv_data error");
                 return;
             };
+            connection.close(VarInt::from_u32(0), b"ended");
         });
     }
 }
