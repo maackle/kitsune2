@@ -214,6 +214,7 @@ impl TxImp for IrohTransport {
                 tracing::error!("Bad peer url to node addr");
                 return;
             };
+            println!("disconnecting");
             let mut connections = self.connections.lock().await;
             if let Some(connection) = connections.get(&addr) {
                 connection.close(VarInt::from_u32(0), &[]);
