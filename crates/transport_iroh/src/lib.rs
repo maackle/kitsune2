@@ -231,13 +231,16 @@ impl TxImp for IrohTransport {
 
             let mut connections = self.connections.lock().await;
 
-            // if !connections.contains_key(&addr) {
-            let connection =
-                self.endpoint.connect(addr.clone(), ALPN).await.map_err(
-                    |err| K2Error::other(format!("failed to connect: {err:?}")),
-                )?;
-            connections.insert(addr.clone(), connection);
-            // }
+            if !connections.contains_key(&addr) {
+                let connection = self
+                    .endpoint
+                    .connect(addr.clone(), ALPN)
+                    .await
+                    .map_err(|err| {
+                        K2Error::other(format!("failed to connect: {err:?}"))
+                    })?;
+                connections.insert(addr.clone(), connection);
+            }
 
             let Some(connection) = connections.get(&addr) else {
                 return Err(K2Error::other("no connection with peer"));
@@ -252,13 +255,6 @@ impl TxImp for IrohTransport {
             send.finish()
                 .map_err(|err| K2Error::other("Failed to close stream"))?;
             Ok(())
-            // let connection = self.connections.entry(addr).or_insert_with(default)
-
-            // // this would be more efficient if we retool tx5 to use bytes
-            // self.ep
-            //     .send(peer, data.to_vec())
-            //     .await
-            //     .map_err(|e| K2Error::other_src("tx5 send error", e))
         })
     }
 
@@ -293,47 +289,7 @@ impl TxImp for IrohTransport {
 }
 
 async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
-    // let _drop = TaskDrop("evt_task");
-    // use tx5::EndpointEvent::*;
     while let Some(incoming) = endpoint.accept().await {
-        println!("incoming");
-        // match evt {
-        //     ListeningAddressOpen { local_url } => {
-        //         let local_url = match local_url.to_kitsune() {
-        //             Ok(local_url) => local_url,
-        //             Err(err) => {
-        //                 tracing::debug!(?err, "ignoring malformed local url");
-        //                 continue;
-        //             }
-        //         };
-        //         handler.new_listening_address(local_url).await;
-        //     }
-        //     ListeningAddressClosed { local_url: _ } => {
-        //         // MAYBE trigger tombstone of our bootstrap entry here
-        //     }
-        //     Connected { peer_url: _ } => {
-        //         // This is handled in our preflight hook,
-        //         // we can safely ignore this event.
-        //     }
-        //     Disconnected { peer_url } => {
-        //         let peer_url = match peer_url.to_kitsune() {
-        //             Ok(peer_url) => peer_url,
-        //             Err(err) => {
-        //                 tracing::debug!(?err, "ignoring malformed peer url");
-        //                 continue;
-        //             }
-        //         };
-        //         handler.peer_disconnect(peer_url, None);
-        //     }
-        //     Message { peer_url, message } => {
-        //         if let Err(err) =
-        //             handle_msg(&handler, peer_url.clone(), message)
-        //         {
-        //             ep.close(&peer_url);
-        //             tracing::debug!(?err);
-        //         }
-        //     }
-        // }
         let endpoint = endpoint.clone();
         let handler = handler.clone();
         tokio::spawn(async move {
