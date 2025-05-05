@@ -229,7 +229,7 @@ impl TxImp for IrohTransport {
                 K2Error::other(format!("bad peer url: {:?}", err))
             })?;
 
-            let mut connections = self.connections.lock().await;
+            // let mut connections = self.connections.lock().await;
 
             // if !connections.contains_key(&addr) {
             let connection =
@@ -260,7 +260,7 @@ impl TxImp for IrohTransport {
                     let send = connection.open_uni().await.map_err(|err| {
                         K2Error::other(format!("failed to open uni: {err:?}"))
                     })?;
-                    connections.insert(addr.clone(), connection);
+                    // connections.insert(addr.clone(), connection);
                     send
                 }
             };
@@ -273,7 +273,9 @@ impl TxImp for IrohTransport {
             // send.stopped()
             //     .await
             //     .map_err(|err| K2Error::other("Failed to stop stream"))?;
+            println!("before closing ");
             connection.closed().await;
+            println!("after closing ");
             Ok(())
         })
     }
@@ -355,7 +357,9 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
                 tracing::error!("recv_data error");
                 return;
             };
+            println!("before close");
             connection.close(VarInt::from_u32(0), b"ended");
+            println!("after close");
         });
     }
 }
