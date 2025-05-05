@@ -168,12 +168,21 @@ fn peer_url_to_node_addr(peer_url: Url) -> Result<NodeAddr, K2Error> {
     })
 }
 
-fn node_addr_to_peer_url(node_addr: NodeAddr) -> Option<Url> {
+fn to_peer_url(relay_url: RelayUrl, node_id: NodeId) -> Result<Url, K2Error> {
+    let url = url::Url::from(relay_url);
+    let mut url_str = url.to_string();
+    if let Some(s) = url_str.strip_suffix("./") {
+        url_str = s.to_string();
+    }
+    let u = format!("{}:443/{}", url_str, node_id);
+    Url::from_str(u.as_str())
+}
+
+fn node_addr_to_peer_url(node_addr: NodeAddr) -> Result<Url, K2Error> {
     let Some(relay_url) = node_addr.relay_url else {
-        return None;
+        return Err(K2Error::other("missing relay url"));
     };
-    let u = format!("{}{}", relay_url, node_addr.node_id);
-    Url::from_str(u.as_str()).ok()
+    to_peer_url(relay_url, node_addr.node_id)
 }
 
 impl TxImp for IrohTransport {
@@ -181,8 +190,15 @@ impl TxImp for IrohTransport {
         let Ok(Some(relay_url)) = self.endpoint.home_relay().get() else {
             return None;
         };
-        let u = format!("{}{}", relay_url, self.endpoint.node_id());
-        Url::from_str(u.as_str()).ok()
+        println!(
+            "{}",
+            to_peer_url(relay_url.clone(), self.endpoint.node_id())
+                .expect("Invalid URL"),
+        );
+        Some(
+            to_peer_url(relay_url, self.endpoint.node_id())
+                .expect("Invalid URL"),
+        )
     }
 
     fn disconnect(
@@ -190,6 +206,7 @@ impl TxImp for IrohTransport {
         peer: Url,
         _payload: Option<(String, bytes::Bytes)>,
     ) -> BoxFut<'_, ()> {
+        println!("disconnect");
         Box::pin(async move {
             let Ok(addr) = peer_url_to_node_addr(peer) else {
                 tracing::error!("Bad peer url to node addr");
@@ -246,6 +263,7 @@ impl TxImp for IrohTransport {
     }
 
     fn dump_network_stats(&self) -> BoxFut<'_, K2Result<TransportStats>> {
+        println!("dump");
         Box::pin(async move {
             let connections = self.connections.lock().await;
 
@@ -254,7 +272,7 @@ impl TxImp for IrohTransport {
                 peer_urls: connections
                     .iter()
                     .filter_map(|(node_addr, _)| {
-                        node_addr_to_peer_url(node_addr.clone())
+                        node_addr_to_peer_url(node_addr.clone()).ok()
                     })
                     .collect(),
                 connections: connections
@@ -279,6 +297,8 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
     // let _drop = TaskDrop("evt_task");
     // use tx5::EndpointEvent::*;
     while let Some(incoming) = endpoint.accept().await {
+        println!("incoming");
+
         // match evt {
         //     ListeningAddressOpen { local_url } => {
         //         let local_url = match local_url.to_kitsune() {
