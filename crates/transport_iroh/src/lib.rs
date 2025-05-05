@@ -129,11 +129,13 @@ impl IrohTransport {
         handler: Arc<TxImpHnd>,
     ) -> K2Result<DynTxImp> {
         let endpoint = iroh::Endpoint::builder()
+            .relay_mode(iroh::RelayMode::Default)
             .alpns(vec![ALPN.to_vec()])
             .bind()
             .await
             .map_err(|err| K2Error::other("bad"))?;
 
+        let _relay_url = endpoint.home_relay().initialized().await.unwrap();
         let endpoint = Arc::new(endpoint);
 
         let evt_task = tokio::task::spawn(evt_task(handler, endpoint.clone()))
@@ -176,7 +178,9 @@ fn node_addr_to_peer_url(node_addr: NodeAddr) -> Option<Url> {
 
 impl TxImp for IrohTransport {
     fn url(&self) -> Option<Url> {
+        println!("aaaaa");
         let Ok(Some(relay_url)) = self.endpoint.home_relay().get() else {
+            println!("aaaaa1");
             return None;
         };
         let u = format!("{}/{}", relay_url, self.endpoint.node_id());
