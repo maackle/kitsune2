@@ -333,11 +333,11 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
                 tracing::error!("Remote node id error");
                 return;
             };
-            // let Ok(()) = recv.stop(VarInt::from_u32(0)) else {
-            //     tracing::error!("Remote node id error");
-            //     return;
-            // };
-            connection.close(VarInt::from_u32(0), b"aa");
+            let Ok(()) = recv.stop(VarInt::from_u32(0)) else {
+                tracing::error!("Remote node id error");
+                return;
+            };
+            // connection.close(VarInt::from_u32(0), b"aa");
 
             let Some(remote_info) = endpoint.remote_info(node_id) else {
                 tracing::error!("Remote info error ");
