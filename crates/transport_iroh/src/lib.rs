@@ -274,6 +274,9 @@ impl TxImp for IrohTransport {
                 .map_err(|err| K2Error::other("Failed to write all"))?;
             send.finish()
                 .map_err(|err| K2Error::other("Failed to close stream"))?;
+            send.stopped()
+                .await
+                .map_err(|err| K2Error::other("Failed to stop stream"))?;
             Ok(())
         })
     }
@@ -326,14 +329,11 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
                 tracing::error!("Read to end error");
                 return;
             };
-            let Ok(()) = recv.stop(VarInt::from_u32(0)) else {
-                tracing::error!("Stop");
-                return;
-            };
             let Ok(node_id) = connection.remote_node_id() else {
                 tracing::error!("Remote node id error");
                 return;
             };
+            connection.close(VarInt::from_u32(0), &[]);
 
             let Some(remote_info) = endpoint.remote_info(node_id) else {
                 tracing::error!("Remote info error ");
