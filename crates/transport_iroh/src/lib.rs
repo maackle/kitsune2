@@ -178,7 +178,6 @@ fn node_addr_to_peer_url(node_addr: NodeAddr) -> Option<Url> {
 
 impl TxImp for IrohTransport {
     fn url(&self) -> Option<Url> {
-        println!("aaaaa");
         let Ok(Some(relay_url)) = self.endpoint.home_relay().get() else {
             return None;
         };
@@ -206,6 +205,7 @@ impl TxImp for IrohTransport {
     }
 
     fn send(&self, peer: Url, data: bytes::Bytes) -> BoxFut<'_, K2Result<()>> {
+        println!("send");
         Box::pin(async move {
             let addr = peer_url_to_node_addr(peer)
                 .map_err(|err| K2Error::other("bad peer url"))?;

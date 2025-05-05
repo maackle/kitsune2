@@ -83,22 +83,11 @@ impl App {
             },
         )?;
 
-        // builder.config.set_module_config(
-        //     &kitsune2_transport_tx5::Tx5TransportModConfig {
-        //         tx5_transport: kitsune2_transport_tx5::Tx5TransportConfig {
-        //             signal_allow_plain_text: true,
-        //             server_url: args.signal_url,
-        //             timeout_s: 10,
-        //             webrtc_config: serde_json::json!({
-        //               "iceServers": [
-        //                 { "urls": ["stun:stun-0.main.infra.holo.host:443"] },
-        //                 { "urls": ["stun:stun-1.main.infra.holo.host:443"] }
-        //               ]
-        //             }),
-        //             ..Default::default()
-        //         },
-        //     },
-        // )?;
+        builder.config.set_module_config(
+            &kitsune2_transport_iroh::IrohTransportModConfig {
+                iroh_transport: kitsune2_transport_iroh::IrohTransportConfig {},
+            },
+        )?;
 
         let h: DynKitsuneHandler = Arc::new(K(print.clone()));
         let k = builder.build().await?;
