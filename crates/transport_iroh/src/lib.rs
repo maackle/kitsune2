@@ -338,43 +338,40 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
         let handler = handler.clone();
         tokio::spawn(async move {
             let Ok(connection) = incoming.await else {
-                println!("Incoming connection error");
+                tracing::error!("Incoming connection error");
                 return;
             };
-            // .map_err(|err| K2Error::other("connection error"))?;
             let Ok(mut recv) = connection.accept_uni().await else {
-                println!("Accept uni error");
+                tracing::error!("Accept uni error");
                 return;
             };
-
-            // let node_addr = connection
 
             let Ok(data) = recv.read_to_end(1_000_000_000).await else {
-                println!("Read to end error");
+                tracing::error!("Read to end error");
                 return;
             };
             let Ok(node_id) = connection.remote_node_id() else {
-                println!("Remote node id error");
+                tracing::error!("Remote node id error");
                 return;
             };
 
             let Some(remote_info) = endpoint.remote_info(node_id) else {
-                println!("Remote info error ");
+                tracing::error!("Remote info error ");
                 return;
             };
             let Some(relay_url_info) = remote_info.relay_url else {
-                println!("Remote info error ");
+                tracing::error!("Remote info error ");
                 return;
             };
 
             let Ok(peer) = to_peer_url(relay_url_info.relay_url, node_id)
             else {
-                println!("Url from str error");
+                tracing::error!("Url from str error");
                 return;
             };
 
             let Ok(()) = handler.recv_data(peer, data.into()) else {
-                println!("recv_data error");
+                tracing::error!("recv_data error");
                 return;
             };
         });
