@@ -158,7 +158,6 @@ fn peer_url_to_node_addr(peer_url: Url) -> Result<NodeAddr, K2Error> {
     let decoded_peer_id = base64::prelude::BASE64_URL_SAFE_NO_PAD
         .decode(peer_id)
         .map_err(|err| K2Error::other("failed to decode peer id"))?;
-    println!("{} {}", peer_id, decoded_peer_id.len());
     let node_id = NodeId::try_from(decoded_peer_id.as_slice())
         .map_err(|err| K2Error::other(format!("bad peer id: {err}")))?;
 
@@ -237,17 +236,18 @@ impl TxImp for IrohTransport {
                     .endpoint
                     .connect(addr.clone(), ALPN)
                     .await
-                    .map_err(|err| K2Error::other("failed to connect"))?;
+                    .map_err(|err| {
+                        K2Error::other(format!("failed to connect: {err:?}"))
+                    })?;
                 connections.insert(addr.clone(), connection);
             }
 
             let Some(connection) = connections.get(&addr) else {
                 return Err(K2Error::other("no connection with peer"));
             };
-            let mut send = connection
-                .open_uni()
-                .await
-                .map_err(|err| K2Error::other("Failed to open uni"))?;
+            let mut send = connection.open_uni().await.map_err(|err| {
+                K2Error::other(format!("Failed to open uni: {err:?}"))
+            })?;
 
             send.write_all(data.as_ref())
                 .await
@@ -266,7 +266,6 @@ impl TxImp for IrohTransport {
     }
 
     fn dump_network_stats(&self) -> BoxFut<'_, K2Result<TransportStats>> {
-        println!("dump");
         Box::pin(async move {
             let connections = self.connections.lock().await;
 
@@ -300,8 +299,6 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
     // let _drop = TaskDrop("evt_task");
     // use tx5::EndpointEvent::*;
     while let Some(incoming) = endpoint.accept().await {
-        println!("incoming");
-
         // match evt {
         //     ListeningAddressOpen { local_url } => {
         //         let local_url = match local_url.to_kitsune() {
