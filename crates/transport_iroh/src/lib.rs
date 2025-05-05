@@ -155,11 +155,16 @@ fn peer_url_to_node_addr(peer_url: Url) -> Result<NodeAddr, K2Error> {
     let Some(peer_id) = peer_url.peer_id() else {
         return Err(K2Error::other("empty peer url"));
     };
-    let node_id = NodeId::try_from(peer_id.as_bytes())
-        .map_err(|err| K2Error::other("bad peer id"))?;
+    let decoded_peer_id = base64::prelude::BASE64_URL_SAFE_NO_PAD
+        .decode(peer_id)
+        .map_err(|err| K2Error::other("failed to decode peer id"))?;
+    println!("{} {}", peer_id, decoded_peer_id.len());
+    let node_id = NodeId::try_from(decoded_peer_id.as_slice())
+        .map_err(|err| K2Error::other(format!("bad peer id: {err}")))?;
 
-    let relay_url = url::Url::parse(peer_url.addr())
-        .map_err(|err| K2Error::other("Bad addr"))?;
+    let relay_url =
+        url::Url::parse(format!("https://{}", peer_url.addr()).as_str())
+            .map_err(|err| K2Error::other("Bad addr"))?;
 
     Ok(NodeAddr {
         node_id,
@@ -174,7 +179,11 @@ fn to_peer_url(relay_url: RelayUrl, node_id: NodeId) -> Result<Url, K2Error> {
     if let Some(s) = url_str.strip_suffix("./") {
         url_str = s.to_string();
     }
-    let u = format!("{}:443/{}", url_str, node_id);
+    let u = format!(
+        "{}:443/{}",
+        url_str,
+        base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(node_id)
+    );
     Url::from_str(u.as_str())
 }
 
@@ -190,11 +199,6 @@ impl TxImp for IrohTransport {
         let Ok(Some(relay_url)) = self.endpoint.home_relay().get() else {
             return None;
         };
-        println!(
-            "{}",
-            to_peer_url(relay_url.clone(), self.endpoint.node_id())
-                .expect("Invalid URL"),
-        );
         Some(
             to_peer_url(relay_url, self.endpoint.node_id())
                 .expect("Invalid URL"),
@@ -206,7 +210,6 @@ impl TxImp for IrohTransport {
         peer: Url,
         _payload: Option<(String, bytes::Bytes)>,
     ) -> BoxFut<'_, ()> {
-        println!("disconnect");
         Box::pin(async move {
             let Ok(addr) = peer_url_to_node_addr(peer) else {
                 tracing::error!("Bad peer url to node addr");
@@ -222,10 +225,10 @@ impl TxImp for IrohTransport {
     }
 
     fn send(&self, peer: Url, data: bytes::Bytes) -> BoxFut<'_, K2Result<()>> {
-        println!("send");
         Box::pin(async move {
-            let addr = peer_url_to_node_addr(peer)
-                .map_err(|err| K2Error::other("bad peer url"))?;
+            let addr = peer_url_to_node_addr(peer).map_err(|err| {
+                K2Error::other(format!("bad peer url: {:?}", err))
+            })?;
 
             let mut connections = self.connections.lock().await;
 
