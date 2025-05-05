@@ -231,16 +231,13 @@ impl TxImp for IrohTransport {
 
             let mut connections = self.connections.lock().await;
 
-            if !connections.contains_key(&addr) {
-                let connection = self
-                    .endpoint
-                    .connect(addr.clone(), ALPN)
-                    .await
-                    .map_err(|err| {
-                        K2Error::other(format!("failed to connect: {err:?}"))
-                    })?;
-                connections.insert(addr.clone(), connection);
-            }
+            // if !connections.contains_key(&addr) {
+            let connection =
+                self.endpoint.connect(addr.clone(), ALPN).await.map_err(
+                    |err| K2Error::other(format!("failed to connect: {err:?}")),
+                )?;
+            connections.insert(addr.clone(), connection);
+            // }
 
             let Some(connection) = connections.get(&addr) else {
                 return Err(K2Error::other("no connection with peer"));
