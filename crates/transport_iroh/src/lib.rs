@@ -348,14 +348,14 @@ async fn evt_task(
                 tracing::error!("Accept uni error");
                 return;
             };
-            if !connections.contains_key(&node_id) {
-                connections.insert(node_id.clone(), connection);
-            }
 
             let Ok(data) = recv.read_to_end(1_000_000_000).await else {
                 tracing::error!("Read to end error");
                 return;
             };
+            if !connections.contains_key(&node_id) {
+                connections.insert(node_id.clone(), connection);
+            }
 
             let Some(remote_info) = endpoint.remote_info(node_id) else {
                 tracing::error!("Remote info error ");
