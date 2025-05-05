@@ -17,7 +17,7 @@ kitsune2 = { workspace = true }
 kitsune2_api = { workspace = true }
 kitsune2_core = { workspace = true }
 kitsune2_transport_iroh = { workspace = true }
-rustls = { workspace = true }
+rustls = { workspace = true, features = ["aws-lc-rs"] }
 rustyline = { version = "15.0.0", features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

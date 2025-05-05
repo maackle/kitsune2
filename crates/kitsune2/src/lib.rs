@@ -74,9 +74,6 @@ mod test {
         bootstrap::TestBootstrapSrv, enable_tracing, iter_check, random_bytes,
         space::TEST_SPACE_ID,
     };
-    use kitsune2_transport_tx5::config::{
-        Tx5TransportConfig, Tx5TransportModConfig,
-    };
     use sbd_server::SbdServer;
     use std::sync::Arc;
 
@@ -126,16 +123,16 @@ mod test {
                 },
             })
             .unwrap();
-        kitsune_builder
-            .config
-            .set_module_config(&Tx5TransportModConfig {
-                tx5_transport: Tx5TransportConfig {
-                    server_url: signal_server_url.to_owned(),
-                    signal_allow_plain_text: true,
-                    ..Default::default()
-                },
-            })
-            .unwrap();
+        // kitsune_builder
+        //     .config
+        //     .set_module_config(&Tx5TransportModConfig {
+        //         tx5_transport: Tx5TransportConfig {
+        //             server_url: signal_server_url.to_owned(),
+        //             signal_allow_plain_text: true,
+        //             ..Default::default()
+        //         },
+        //     })
+        //     .unwrap();
         kitsune_builder
             .config
             .set_module_config(&K2GossipModConfig {
