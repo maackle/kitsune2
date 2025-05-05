@@ -296,6 +296,7 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
     // let _drop = TaskDrop("evt_task");
     // use tx5::EndpointEvent::*;
     while let Some(incoming) = endpoint.accept().await {
+        println!("incoming");
         // match evt {
         //     ListeningAddressOpen { local_url } => {
         //         let local_url = match local_url.to_kitsune() {
@@ -337,42 +338,43 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
         let handler = handler.clone();
         tokio::spawn(async move {
             let Ok(connection) = incoming.await else {
-                tracing::error!("Incoming connection error");
+                println!("Incoming connection error");
                 return;
             };
             // .map_err(|err| K2Error::other("connection error"))?;
             let Ok(mut recv) = connection.accept_uni().await else {
-                tracing::error!("Accept uni error");
+                println!("Accept uni error");
                 return;
             };
 
             // let node_addr = connection
 
             let Ok(data) = recv.read_to_end(1_000_000_000).await else {
-                tracing::error!("Read to end error");
+                println!("Read to end error");
                 return;
             };
             let Ok(node_id) = connection.remote_node_id() else {
-                tracing::error!("Remote node id error");
+                println!("Remote node id error");
                 return;
             };
 
             let Some(remote_info) = endpoint.remote_info(node_id) else {
-                tracing::error!("Remote info error ");
+                println!("Remote info error ");
                 return;
             };
             let Some(relay_url_info) = remote_info.relay_url else {
-                tracing::error!("Remote info error ");
+                println!("Remote info error ");
                 return;
             };
-            let u = format!("{}/{}", relay_url_info.relay_url, node_id);
-            let Ok(peer) = Url::from_str(u.as_str()) else {
-                tracing::error!("Url from str error");
+
+            let Ok(peer) = to_peer_url(relay_url_info.relay_url, node_id)
+            else {
+                println!("Url from str error");
                 return;
             };
 
             let Ok(()) = handler.recv_data(peer, data.into()) else {
-                tracing::error!("recv_data error");
+                println!("recv_data error");
                 return;
             };
         });
