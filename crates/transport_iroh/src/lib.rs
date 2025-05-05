@@ -252,8 +252,6 @@ impl TxImp for IrohTransport {
             send.write_all(data.as_ref())
                 .await
                 .map_err(|err| K2Error::other("Failed to write all"))?;
-            send.finish()
-                .map_err(|err| K2Error::other("Failed to close stream"))?;
             Ok(())
         })
     }
