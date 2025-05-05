@@ -172,7 +172,7 @@ fn node_addr_to_peer_url(node_addr: NodeAddr) -> Option<Url> {
     let Some(relay_url) = node_addr.relay_url else {
         return None;
     };
-    let u = format!("{}/{}", relay_url, node_addr.node_id);
+    let u = format!("{}{}", relay_url, node_addr.node_id);
     Url::from_str(u.as_str()).ok()
 }
 
@@ -180,10 +180,9 @@ impl TxImp for IrohTransport {
     fn url(&self) -> Option<Url> {
         println!("aaaaa");
         let Ok(Some(relay_url)) = self.endpoint.home_relay().get() else {
-            println!("aaaaa1");
             return None;
         };
-        let u = format!("{}/{}", relay_url, self.endpoint.node_id());
+        let u = format!("{}{}", relay_url, self.endpoint.node_id());
         Url::from_str(u.as_str()).ok()
     }
 
