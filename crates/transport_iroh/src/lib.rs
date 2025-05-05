@@ -249,7 +249,8 @@ impl TxImp for IrohTransport {
             let mut send = match connection.open_uni().await {
                 Ok(s) => s,
                 Err(err) => {
-                    tracing::warn!("Failed to open uni: {err:?}. Reconnecting");
+                    println!("Failed to open uni: {err:?}. Reconnecting");
+                    connection.close(VarInt::from_u32(0), &[]);
                     let connection = self
                         .endpoint
                         .connect(addr.clone(), ALPN)
@@ -270,8 +271,8 @@ impl TxImp for IrohTransport {
             send.write_all(data.as_ref())
                 .await
                 .map_err(|err| K2Error::other("Failed to write all"))?;
-            // send.finish()
-            //     .map_err(|err| K2Error::other("Failed to close stream"))?;
+            send.finish()
+                .map_err(|err| K2Error::other("Failed to close stream"))?;
             Ok(())
         })
     }
