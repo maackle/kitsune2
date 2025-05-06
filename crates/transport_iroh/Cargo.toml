@@ -1,10 +1,10 @@
 [package]
 name = "kitsune2_transport_iroh"
 version.workspace = true
-description = "The Tx5-based transport implementation for kitsune2"
+description = "The iroh based transport implementation for kitsune2"
 license.workspace = true
 homepage.workspace = true
-documentation = "https://docs.rs/kitsune2_transport_tx5"
+documentation = "https://docs.rs/kitsune2_transport_iroh"
 authors.workspace = true
 keywords.workspace = true
 categories.workspace = true

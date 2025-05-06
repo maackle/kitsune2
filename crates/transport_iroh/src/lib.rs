@@ -3,28 +3,31 @@
 
 use base64::Engine;
 use iroh::{
-    endpoint::{self, Connection, VarInt},
-    protocol::Router,
-    Endpoint, NodeAddr, NodeId, RelayUrl,
+    endpoint::{Connection, DirectAddr, VarInt},
+    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl,
 };
 use kitsune2_api::*;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    net::SocketAddr,
     sync::Arc,
 };
 use tokio::sync::Mutex;
-use tracing::instrument::WithSubscriber;
 
 #[allow(missing_docs)]
 pub mod config {
     /// Configuration parameters for [IrohTransportFactory](super::IrohTransportFactory).
     #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
-    pub struct IrohTransportConfig {}
+    pub struct IrohTransportConfig {
+        pub custom_relay_url: Option<String>,
+    }
 
     impl Default for IrohTransportConfig {
         fn default() -> Self {
-            Self {}
+            Self {
+                custom_relay_url: None,
+            }
         }
     }
 
@@ -58,18 +61,12 @@ impl TransportFactory for IrohTransportFactory {
     fn validate_config(&self, config: &Config) -> K2Result<()> {
         let config: IrohTransportModConfig = config.get_module_config()?;
 
-        // make sure our signal server url is parse-able.
-        // let sig = config.iroh_transport.server_url.as_str().to_sig_url()?;
-        // let sig = url::Url::parse(&sig)
-        //     .map_err(|err| K2Error::other_src("invalid tx5 server url", err))?;
-        // let uses_tls = sig.scheme() == "wss";
-
-        // if !uses_tls && !config.tx5_transport.signal_allow_plain_text {
-        //     return Err(K2Error::other(format!(
-        //         "disallowed plaintext signal url, either specify wss or set signal_allow_plain_text to true: {}",
-        //         sig,
-        //     )));
-        // }
+        // make sure our relay server url is parse-able.i
+        if let Some(relay_url) = config.iroh_transport.custom_relay_url {
+            let _sig = url::Url::parse(relay_url.as_str()).map_err(|err| {
+                K2Error::other_src("invalid iroh custom relay url", err)
+            })?;
+        }
 
         Ok(())
     }
@@ -82,22 +79,6 @@ impl TransportFactory for IrohTransportFactory {
         Box::pin(async move {
             let config: IrohTransportModConfig =
                 builder.config.get_module_config()?;
-
-            // let mut tx5_init_config = tx5_core::Tx5InitConfig {
-            //     tracing_enabled: config.tx5_transport.tracing_enabled,
-            //     ..Default::default()
-            // };
-
-            // if let Some(port) = config.tx5_transport.ephemeral_udp_port_min {
-            //     tx5_init_config.ephemeral_udp_port_min = port;
-            // }
-
-            // if let Some(port) = config.tx5_transport.ephemeral_udp_port_max {
-            //     tx5_init_config.ephemeral_udp_port_max = port;
-            // }
-
-            // // Ignore errors. Only the first call of this can succeed.
-            // let _ = tx5_init_config.set_as_global_default();
 
             let handler = TxImpHnd::new(handler);
             let imp =
@@ -128,8 +109,18 @@ impl IrohTransport {
         config: IrohTransportConfig,
         handler: Arc<TxImpHnd>,
     ) -> K2Result<DynTxImp> {
+        let relay_mode = match config.custom_relay_url {
+            Some(relay_url_str) => {
+                let relay_url = url::Url::parse(relay_url_str.as_str())
+                    .map_err(|err| {
+                        K2Error::other("Failed to parse custom relay url")
+                    })?;
+                RelayMode::Custom(RelayMap::from_url(relay_url.into()))
+            }
+            None => RelayMode::Default,
+        };
         let endpoint = iroh::Endpoint::builder()
-            .relay_mode(iroh::RelayMode::Default)
+            .relay_mode(relay_mode)
             .alpns(vec![ALPN.to_vec()])
             .bind()
             .await
@@ -152,6 +143,9 @@ impl IrohTransport {
 }
 
 fn peer_url_to_node_addr(peer_url: Url) -> Result<NodeAddr, K2Error> {
+    let url = url::Url::parse(peer_url.as_str()).map_err(|err| {
+        K2Error::other(format!("Failed to parse peer url: {err:?}"))
+    })?;
     let Some(peer_id) = peer_url.peer_id() else {
         return Err(K2Error::other("empty peer url"));
     };
@@ -161,9 +155,10 @@ fn peer_url_to_node_addr(peer_url: Url) -> Result<NodeAddr, K2Error> {
     let node_id = NodeId::try_from(decoded_peer_id.as_slice())
         .map_err(|err| K2Error::other(format!("bad peer id: {err}")))?;
 
-    let relay_url =
-        url::Url::parse(format!("https://{}", peer_url.addr()).as_str())
-            .map_err(|err| K2Error::other("Bad addr"))?;
+    let relay_url = url::Url::parse(
+        format!("{}://{}", url.scheme(), peer_url.addr()).as_str(),
+    )
+    .map_err(|err| K2Error::other("Bad addr"))?;
 
     Ok(NodeAddr {
         node_id,
@@ -172,14 +167,15 @@ fn peer_url_to_node_addr(peer_url: Url) -> Result<NodeAddr, K2Error> {
     })
 }
 
-fn to_peer_url(relay_url: RelayUrl, node_id: NodeId) -> Result<Url, K2Error> {
-    let url = url::Url::from(relay_url);
+fn to_peer_url(url: url::Url, node_id: NodeId) -> Result<Url, K2Error> {
+    let port = url.port().unwrap_or(443);
+
     let mut url_str = url.to_string();
     if let Some(s) = url_str.strip_suffix("./") {
         url_str = s.to_string();
     }
     let u = format!(
-        "{}:443/{}",
+        "{}:{port}/{}",
         url_str,
         base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(node_id)
     );
@@ -187,21 +183,61 @@ fn to_peer_url(relay_url: RelayUrl, node_id: NodeId) -> Result<Url, K2Error> {
 }
 
 fn node_addr_to_peer_url(node_addr: NodeAddr) -> Result<Url, K2Error> {
-    let Some(relay_url) = node_addr.relay_url else {
-        return Err(K2Error::other("missing relay url"));
-    };
-    to_peer_url(relay_url, node_addr.node_id)
+    match node_addr.relay_url {
+        Some(relay_url) => to_peer_url(relay_url.into(), node_addr.node_id),
+        None => {
+            let Some(direct_address) = node_addr
+                .direct_addresses
+                .into_iter()
+                .collect::<Vec<SocketAddr>>()
+                .first()
+                .cloned()
+            else {
+                return Err(K2Error::other(
+                    "node addr has no relay url and no direct addresses",
+                ));
+            };
+            let Ok(url) =
+                url::Url::parse(format!("http://{}", direct_address).as_str())
+            else {
+                return Err(K2Error::other("Failed to parse direct addresses"));
+            };
+            to_peer_url(url, node_addr.node_id)
+        }
+    }
 }
 
 impl TxImp for IrohTransport {
     fn url(&self) -> Option<Url> {
-        let Ok(Some(relay_url)) = self.endpoint.home_relay().get() else {
-            return None;
+        let home_relay = self.endpoint.home_relay().get();
+        let url = match home_relay {
+            Ok(Some(relay_url)) => relay_url.into(),
+            _ => {
+                let Ok(Some(direct_addresses)) =
+                    self.endpoint.direct_addresses().get()
+                else {
+                    tracing::error!("Failed to get direct addresses");
+                    return None;
+                };
+
+                let Some(direct_address) = direct_addresses
+                    .into_iter()
+                    .collect::<Vec<DirectAddr>>()
+                    .first()
+                    .cloned()
+                else {
+                    return None;
+                };
+                let Ok(url) = url::Url::parse(
+                    format!("http://{}", direct_address.addr).as_str(),
+                ) else {
+                    tracing::error!("Failed to parse direct addresses");
+                    return None;
+                };
+                url
+            }
         };
-        Some(
-            to_peer_url(relay_url, self.endpoint.node_id())
-                .expect("Invalid URL"),
-        )
+        Some(to_peer_url(url, self.endpoint.node_id()).expect("Invalid URL"))
     }
 
     fn disconnect(
@@ -339,7 +375,8 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
                 return;
             };
 
-            let Ok(peer) = to_peer_url(relay_url_info.relay_url, node_id)
+            let Ok(peer) =
+                to_peer_url(relay_url_info.relay_url.into(), node_id)
             else {
                 tracing::error!("Url from str error");
                 return;
@@ -349,6 +386,10 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
                 tracing::error!("recv_data error");
                 return;
             };
+            // let Ok(()) = recv.stop(VarInt::from_u32(0)) else {
+            //     tracing::error!("stop error");
+            //     return;
+            // };
             connection.close(VarInt::from_u32(0), b"ended");
         });
     }
