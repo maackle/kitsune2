@@ -85,7 +85,9 @@ impl App {
 
         builder.config.set_module_config(
             &kitsune2_transport_iroh::IrohTransportModConfig {
-                iroh_transport: kitsune2_transport_iroh::IrohTransportConfig {},
+                iroh_transport: kitsune2_transport_iroh::IrohTransportConfig {
+                    custom_relay_url: None,
+                },
             },
         )?;
 
