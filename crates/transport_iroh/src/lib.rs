@@ -210,34 +210,14 @@ fn node_addr_to_peer_url(node_addr: NodeAddr) -> Result<Url, K2Error> {
 impl TxImp for IrohTransport {
     fn url(&self) -> Option<Url> {
         let home_relay = self.endpoint.home_relay().get();
-        let url = match home_relay {
-            Ok(Some(relay_url)) => relay_url.into(),
-            _ => {
-                let Ok(Some(direct_addresses)) =
-                    self.endpoint.direct_addresses().get()
-                else {
-                    tracing::error!("Failed to get direct addresses");
-                    return None;
-                };
-
-                let Some(direct_address) = direct_addresses
-                    .into_iter()
-                    .collect::<Vec<DirectAddr>>()
-                    .first()
-                    .cloned()
-                else {
-                    return None;
-                };
-                let Ok(url) = url::Url::parse(
-                    format!("http://{}", direct_address.addr).as_str(),
-                ) else {
-                    tracing::error!("Failed to parse direct addresses");
-                    return None;
-                };
-                url
-            }
+        let Ok(Some(url)) = home_relay else {
+            tracing::error!("Failed to get home relay");
+            return None;
         };
-        Some(to_peer_url(url, self.endpoint.node_id()).expect("Invalid URL"))
+        Some(
+            to_peer_url(url.into(), self.endpoint.node_id())
+                .expect("Invalid URL"),
+        )
     }
 
     fn disconnect(
