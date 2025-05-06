@@ -41,12 +41,12 @@ pub mod config {
 }
 
 pub use config::*;
-/// Provides a Kitsune2 transport module based on the Tx5 crate.
+/// Provides a Kitsune2 transport module based on the iroh crate.
 #[derive(Debug)]
 pub struct IrohTransportFactory {}
 
 impl IrohTransportFactory {
-    /// Construct a new Tx5TransportFactory.
+    /// Construct a new IrohTransportFactory.
     pub fn create() -> DynTransportFactory {
         let out: DynTransportFactory = Arc::new(IrohTransportFactory {});
         out
@@ -265,19 +265,22 @@ impl TxImp for IrohTransport {
                 K2Error::other(format!("bad peer url: {:?}", err))
             })?;
 
-            // let mut connections = self.connections.lock().await;
+            let mut connections = self.connections.lock().await;
 
-            // if !connections.contains_key(&addr) {
-            let connection =
-                self.endpoint.connect(addr.clone(), ALPN).await.map_err(
-                    |err| K2Error::other(format!("failed to connect: {err:?}")),
-                )?;
-            //     connections.insert(addr.clone(), connection);
-            // }
+            if !connections.contains_key(&addr) {
+                let connection = self
+                    .endpoint
+                    .connect(addr.clone(), ALPN)
+                    .await
+                    .map_err(|err| {
+                        K2Error::other(format!("failed to connect: {err:?}"))
+                    })?;
+                connections.insert(addr.clone(), connection);
+            }
 
-            // let Some(connection) = connections.get(&addr) else {
-            //     return Err(K2Error::other("no connection with peer"));
-            // };
+            let Some(connection) = connections.get(&addr) else {
+                return Err(K2Error::other("no connection with peer"));
+            };
 
             let mut send = match connection.open_uni().await {
                 Ok(s) => s,
@@ -296,7 +299,7 @@ impl TxImp for IrohTransport {
                     let send = connection.open_uni().await.map_err(|err| {
                         K2Error::other(format!("failed to open uni: {err:?}"))
                     })?;
-                    // connections.insert(addr.clone(), connection);
+                    connections.insert(addr.clone(), connection);
                     send
                 }
             };
@@ -306,7 +309,10 @@ impl TxImp for IrohTransport {
                 .map_err(|err| K2Error::other("Failed to write all"))?;
             send.finish()
                 .map_err(|err| K2Error::other("Failed to close stream"))?;
-            connection.closed().await;
+            send.stopped().await.map_err(|err| {
+                K2Error::other("Failed to wait for stream to stop")
+            })?;
+            // connection.closed().await;
             Ok(())
         })
     }
@@ -364,8 +370,6 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
                 return;
             };
 
-            // connection.close(VarInt::from_u32(0), b"aa");
-
             let Some(remote_info) = endpoint.remote_info(node_id) else {
                 tracing::error!("Remote info error ");
                 return;
@@ -386,11 +390,11 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
                 tracing::error!("recv_data error");
                 return;
             };
-            // let Ok(()) = recv.stop(VarInt::from_u32(0)) else {
-            //     tracing::error!("stop error");
-            //     return;
-            // };
-            connection.close(VarInt::from_u32(0), b"ended");
+            let Ok(()) = recv.stop(VarInt::from_u32(0)) else {
+                tracing::error!("stop error");
+                return;
+            };
+            // connection.close(VarInt::from_u32(0), b"ended");
         });
     }
 }
