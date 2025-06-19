@@ -115,7 +115,7 @@ impl IrohTransport {
                     .map_err(|err| {
                         K2Error::other("Failed to parse custom relay url")
                     })?;
-                RelayMode::Custom(RelayMap::from(RelayUrl::from(relay_url)))
+                RelayMode::Custom(RelayMap::from_url(RelayUrl::from(relay_url)))
             }
             None => RelayMode::Default,
         };
