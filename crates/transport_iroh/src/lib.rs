@@ -259,27 +259,9 @@ impl TxImp for IrohTransport {
             //     return Err(K2Error::other("no connection with peer"));
             // };
 
-            let mut send = match connection.open_uni().await {
-                Ok(s) => s,
-                Err(err) => {
-                    println!("Failed to open uni: {err:?}. Reconnecting");
-                    connection.close(VarInt::from_u32(0), &[]);
-                    let connection = self
-                        .endpoint
-                        .connect(addr.clone(), ALPN)
-                        .await
-                        .map_err(|err| {
-                            K2Error::other(format!(
-                                "failed to connect: {err:?}"
-                            ))
-                        })?;
-                    let send = connection.open_uni().await.map_err(|err| {
-                        K2Error::other(format!("failed to open uni: {err:?}"))
-                    })?;
-                    // connections.insert(addr.clone(), connection);
-                    send
-                }
-            };
+            let mut send = connection.open_uni().await.map_err(|err| {
+                K2Error::other(format!("failed to open uni: {err:?}"))
+            })?;
 
             send.write_all(data.as_ref())
                 .await
