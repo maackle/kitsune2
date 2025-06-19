@@ -245,15 +245,15 @@ impl TxImp for IrohTransport {
                 K2Error::other(format!("bad peer url: {:?}", err))
             })?;
 
-            let mut connections = self.connections.lock().await;
-
             let connection =
                 self.endpoint.connect(addr.clone(), ALPN).await.map_err(
                     |err| K2Error::other(format!("failed to connect: {err:?}")),
                 )?;
+            let mut connections = self.connections.lock().await;
             if !connections.contains_key(&addr) {
                 connections.insert(addr.clone(), connection.clone());
             }
+            drop(connections);
 
             // let Some(connection) = connections.get(&addr) else {
             //     return Err(K2Error::other("no connection with peer"));
