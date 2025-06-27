@@ -4,7 +4,7 @@
 use base64::Engine;
 use iroh::{
     endpoint::{Connection, DirectAddr, VarInt},
-    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl,
+    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, Watcher,
 };
 use kitsune2_api::*;
 use std::{
@@ -210,12 +210,16 @@ fn node_addr_to_peer_url(node_addr: NodeAddr) -> Result<Url, K2Error> {
 impl TxImp for IrohTransport {
     fn url(&self) -> Option<Url> {
         let home_relay = self.endpoint.home_relay().get();
-        let Ok(Some(url)) = home_relay else {
+        let Ok(urls) = home_relay else {
+            tracing::error!("Failed to get home relay");
+            return None;
+        };
+        let Some(url) = urls.first() else {
             tracing::error!("Failed to get home relay");
             return None;
         };
         Some(
-            to_peer_url(url.into(), self.endpoint.node_id())
+            to_peer_url(url.clone().into(), self.endpoint.node_id())
                 .expect("Invalid URL"),
         )
     }
