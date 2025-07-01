@@ -143,7 +143,9 @@ impl IrohTransport {
                         };
                         let url = to_peer_url(url.clone().into(), e.node_id())
                             .expect("Invalid URL");
-                        tracing::error!("New relay URL: {url:?}");
+
+                        tracing::info!("New relay URL: {url:?}");
+
                         h.new_listening_address(url).await
                     }
                     Err(err) => {
