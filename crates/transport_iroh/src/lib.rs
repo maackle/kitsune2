@@ -3,8 +3,8 @@
 
 use base64::Engine;
 use iroh::{
-    endpoint::{Connection, DirectAddr, VarInt},
-    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, Watcher,
+    endpoint::{Connection, VarInt},
+    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, 
 };
 use kitsune2_api::*;
 use std::{
@@ -138,7 +138,7 @@ impl IrohTransport {
             loop {
                 match e.home_relay().updated().await {
                     Ok(new_urls) => {
-                        let Some(url) = new_urls.first() else {
+                        let Some(url) = new_urls else {
                             break;
                         };
                         let url = to_peer_url(url.clone().into(), e.node_id())
@@ -245,7 +245,7 @@ impl TxImp for IrohTransport {
             tracing::error!("Failed to get home relay");
             return None;
         };
-        let Some(url) = urls.first() else {
+        let Some(url) = urls else {
             tracing::error!("Failed to get home relay");
             return None;
         };
