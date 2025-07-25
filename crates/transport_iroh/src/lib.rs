@@ -286,6 +286,7 @@ impl TxImp for IrohTransport {
             let connection = match connection_result {
                 Ok(c) => c,
                 Err(err) => {
+                    tracing::warn!("connect() failed: marking {peer} as unresponsive.");
                     self.handler
                         .set_unresponsive(peer, Timestamp::now())
                         .await?;
@@ -309,6 +310,7 @@ impl TxImp for IrohTransport {
                 Ok(s) => s,
 
                 Err(err) => {
+                    tracing::warn!("open_uni() failed: Marking {peer} as unresponsive.");
                     self.handler
                         .set_unresponsive(peer, Timestamp::now())
                         .await?;
