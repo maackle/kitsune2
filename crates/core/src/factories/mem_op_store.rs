@@ -103,14 +103,24 @@ impl From<MemoryOp> for Bytes {
 /// Test data should create [MemoryOp]s and not be aware of this type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryOpRecord {
-    /// The id (hash) of the op
+    /// The cached id (hash) of the op
     pub op_id: OpId,
-    /// The creation timestamp of this op
-    pub created_at: Timestamp,
     /// The timestamp at which this op was stored by us
     pub stored_at: Timestamp,
-    /// The data for the op
-    pub op_data: Vec<u8>,
+    /// The op data
+    pub op: MemoryOp,
+}
+
+impl MemoryOpRecord {
+    /// Get the creation timestamp of the op.
+    pub fn created_at(&self) -> Timestamp {
+        self.op.created_at
+    }
+
+    /// Get the op data.
+    pub fn op_data(&self) -> &[u8] {
+        self.op.op_data.as_slice()
+    }
 }
 
 impl From<Bytes> for MemoryOpRecord {
@@ -118,9 +128,8 @@ impl From<Bytes> for MemoryOpRecord {
         let inner: MemoryOp = value.into();
         Self {
             op_id: inner.compute_op_id(),
-            created_at: inner.created_at,
             stored_at: Timestamp::now(),
-            op_data: inner.op_data,
+            op: inner,
         }
     }
 }
@@ -218,18 +227,18 @@ impl OpStore for Kitsune2MemoryOpStore {
                 .iter()
                 .filter(|(_, op)| {
                     let loc = op.op_id.loc();
-                    op.created_at >= start
-                        && op.created_at < end
+                    op.created_at() >= start
+                        && op.created_at() < end
                         && arc.contains(loc)
                 })
                 .collect::<Vec<_>>();
-            candidate_ops.sort_by_key(|a| a.1.created_at);
+            candidate_ops.sort_by_key(|a| a.1.created_at());
 
             Ok((
                 candidate_ops
                     .iter()
                     .map(|(op_id, record)| {
-                        used_bytes += record.op_data.len() as u32;
+                        used_bytes += record.op_data().len() as u32;
                         (*op_id).clone()
                     })
                     .collect(),
@@ -250,8 +259,8 @@ impl OpStore for Kitsune2MemoryOpStore {
                     self_lock.op_list.get(op_id).map(|op| MetaOp {
                         op_id: op.op_id.clone(),
                         op_data: MemoryOp {
-                            created_at: op.created_at,
-                            op_data: op.op_data.clone(),
+                            created_at: op.created_at(),
+                            op_data: op.op_data().to_vec(),
                         }
                         .into(),
                     })
@@ -302,7 +311,7 @@ impl OpStore for Kitsune2MemoryOpStore {
             let op_ids = candidate_ops
                 .into_iter()
                 .take_while(|op| {
-                    let data_len = op.op_data.len() as u32;
+                    let data_len = op.op_data().len() as u32;
                     if total_bytes + data_len <= limit_bytes {
                         total_bytes += data_len;
                         true
@@ -338,7 +347,7 @@ impl OpStore for Kitsune2MemoryOpStore {
                 .iter()
                 .filter_map(|(_, op)| {
                     if arc.contains(op.op_id.loc()) {
-                        Some(op.created_at)
+                        Some(op.created_at())
                     } else {
                         None
                     }
