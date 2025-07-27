@@ -10,6 +10,7 @@ use kitsune2_api::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -20,17 +21,28 @@ mod test;
 
 /// The mem op store implementation provided by Kitsune2.
 #[derive(Debug)]
-pub struct MemOpStoreFactory {}
+pub struct MemOpStoreFactory<MemOp> {
+    _mem_op: PhantomData<MemOp>,
+}
 
-impl MemOpStoreFactory {
+impl<MemOp: MemoryOp> Default for MemOpStoreFactory<MemOp> {
+    fn default() -> Self {
+        Self {
+            _mem_op: PhantomData::<MemOp>::default(),
+        }
+    }
+}
+
+impl<MemOp: MemoryOp> MemOpStoreFactory<MemOp> {
     /// Construct a new MemOpStoreFactory.
     pub fn create() -> DynOpStoreFactory {
-        let out: DynOpStoreFactory = Arc::new(MemOpStoreFactory {});
+        let out: DynOpStoreFactory =
+            Arc::new(MemOpStoreFactory::<MemOp>::default());
         out
     }
 }
 
-impl OpStoreFactory for MemOpStoreFactory {
+impl<MemOp: MemoryOp> OpStoreFactory for MemOpStoreFactory<MemOp> {
     fn default_config(&self, _config: &mut Config) -> K2Result<()> {
         Ok(())
     }
@@ -45,7 +57,8 @@ impl OpStoreFactory for MemOpStoreFactory {
         space: SpaceId,
     ) -> BoxFut<'static, K2Result<DynOpStore>> {
         Box::pin(async move {
-            let out: DynOpStore = Arc::new(Kitsune2MemoryOpStore::new(space));
+            let out: DynOpStore =
+                Arc::new(Kitsune2MemoryOpStore::<MemOp>::new(space));
             Ok(out)
         })
     }
@@ -55,14 +68,46 @@ impl OpStoreFactory for MemOpStoreFactory {
 /// via serde_json (with inefficient encoding of the payload) to be
 /// used for testing purposes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MemoryOp {
+pub struct TestMemoryOp {
     /// The creation timestamp of this op
     pub created_at: Timestamp,
     /// The data for the op
     pub op_data: Vec<u8>,
 }
 
-impl MemoryOp {
+impl MemoryOp for TestMemoryOp {
+    fn from_bytes(bytes: Bytes) -> Self {
+        serde_json::from_slice(&bytes)
+            .expect("failed to deserialize MemoryOp from bytes")
+    }
+
+    fn to_bytes(&self) -> Bytes {
+        serde_json::to_vec(&self)
+            .expect("failed to serialize MemoryOp to bytes")
+            .into()
+    }
+
+    /// Compute the op id for this op.
+    ///
+    /// Note that this produces predictable op ids for testing purposes.
+    /// It is simply the first 32 bytes of the op data.
+    fn compute_op_id(&self) -> OpId {
+        let mut value =
+            self.op_data.as_slice()[..32.min(self.op_data.len())].to_vec();
+        value.resize(32, 0);
+        OpId::from(bytes::Bytes::from(value))
+    }
+
+    fn created_at(&self) -> Timestamp {
+        self.created_at
+    }
+
+    fn op_data(&self) -> &[u8] {
+        self.op_data.as_slice()
+    }
+}
+
+impl TestMemoryOp {
     /// Create a new [MemoryOp].
     pub fn new(timestamp: Timestamp, payload: Vec<u8>) -> Self {
         Self {
@@ -70,28 +115,17 @@ impl MemoryOp {
             op_data: payload,
         }
     }
-
-    /// Compute the op id for this op.
-    ///
-    /// Note that this produces predictable op ids for testing purposes.
-    /// It is simply the first 32 bytes of the op data.
-    pub fn compute_op_id(&self) -> OpId {
-        let mut value =
-            self.op_data.as_slice()[..32.min(self.op_data.len())].to_vec();
-        value.resize(32, 0);
-        OpId::from(bytes::Bytes::from(value))
-    }
 }
 
-impl From<Bytes> for MemoryOp {
+impl From<Bytes> for TestMemoryOp {
     fn from(value: Bytes) -> Self {
         serde_json::from_slice(&value)
             .expect("failed to deserialize MemoryOp from bytes")
     }
 }
 
-impl From<MemoryOp> for Bytes {
-    fn from(value: MemoryOp) -> Self {
+impl From<TestMemoryOp> for Bytes {
+    fn from(value: TestMemoryOp) -> Self {
         serde_json::to_vec(&value)
             .expect("failed to serialize MemoryOp to bytes")
             .into()
@@ -102,30 +136,30 @@ impl From<MemoryOp> for Bytes {
 ///
 /// Test data should create [MemoryOp]s and not be aware of this type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryOpRecord {
+pub struct MemoryOpRecord<MemOp> {
     /// The cached id (hash) of the op
     pub op_id: OpId,
     /// The timestamp at which this op was stored by us
     pub stored_at: Timestamp,
     /// The op data
-    pub op: MemoryOp,
+    pub op: MemOp,
 }
 
-impl MemoryOpRecord {
+impl<MemOp: MemoryOp> MemoryOpRecord<MemOp> {
     /// Get the creation timestamp of the op.
     pub fn created_at(&self) -> Timestamp {
-        self.op.created_at
+        self.op.created_at()
     }
 
     /// Get the op data.
     pub fn op_data(&self) -> &[u8] {
-        self.op.op_data.as_slice()
+        self.op.op_data()
     }
 }
 
-impl From<Bytes> for MemoryOpRecord {
+impl<MemOp: MemoryOp> From<Bytes> for MemoryOpRecord<MemOp> {
     fn from(value: Bytes) -> Self {
-        let inner: MemoryOp = value.into();
+        let inner = MemOp::from_bytes(value);
         Self {
             op_id: inner.compute_op_id(),
             stored_at: Timestamp::now(),
@@ -134,8 +168,8 @@ impl From<Bytes> for MemoryOpRecord {
     }
 }
 
-impl From<MemoryOp> for StoredOp {
-    fn from(value: MemoryOp) -> Self {
+impl From<TestMemoryOp> for StoredOp {
+    fn from(value: TestMemoryOp) -> Self {
         StoredOp {
             op_id: value.compute_op_id(),
             created_at: value.created_at,
@@ -143,22 +177,41 @@ impl From<MemoryOp> for StoredOp {
     }
 }
 
-impl From<Op> for MemoryOp {
+impl From<Op> for TestMemoryOp {
     fn from(value: Op) -> Self {
         value.data.into()
     }
+}
+
+/// A trait for op implementations that are stored in the mem op store.
+///
+/// This trait is used to ensure that all op implementations are compatible with the mem op store.
+/// It is also used to ensure that the op implementations are serialized and deserialized correctly.
+pub trait MemoryOp:
+    Clone + PartialEq + Send + Sync + std::fmt::Debug + 'static
+{
+    /// Deserialize an op from bytes.
+    fn from_bytes(bytes: Bytes) -> Self;
+    /// Serialize an op to bytes.
+    fn to_bytes(&self) -> Bytes;
+    /// Compute the op id for this op.
+    fn compute_op_id(&self) -> OpId;
+    /// Get the creation timestamp of the op.
+    fn created_at(&self) -> Timestamp;
+    /// Get the op data.
+    fn op_data(&self) -> &[u8];
 }
 
 /// The in-memory op store implementation for Kitsune2.
 ///
 /// Intended for testing only, because it provides no persistence of op data.
 #[derive(Debug)]
-struct Kitsune2MemoryOpStore {
+struct Kitsune2MemoryOpStore<MemOp> {
     _space: SpaceId,
-    inner: RwLock<Kitsune2MemoryOpStoreInner>,
+    inner: RwLock<Kitsune2MemoryOpStoreInner<MemOp>>,
 }
 
-impl Kitsune2MemoryOpStore {
+impl<MemOp: MemoryOp> Kitsune2MemoryOpStore<MemOp> {
     /// Create a new [Kitsune2MemoryOpStore].
     pub fn new(space: SpaceId) -> Self {
         Self {
@@ -168,8 +221,8 @@ impl Kitsune2MemoryOpStore {
     }
 }
 
-impl std::ops::Deref for Kitsune2MemoryOpStore {
-    type Target = RwLock<Kitsune2MemoryOpStoreInner>;
+impl<MemOp: MemoryOp> std::ops::Deref for Kitsune2MemoryOpStore<MemOp> {
+    type Target = RwLock<Kitsune2MemoryOpStoreInner<MemOp>>;
 
     fn deref(&self) -> &Self::Target {
         &self.inner
@@ -177,15 +230,24 @@ impl std::ops::Deref for Kitsune2MemoryOpStore {
 }
 
 /// The inner state of a [Kitsune2MemoryOpStore].
-#[derive(Debug, Default)]
-struct Kitsune2MemoryOpStoreInner {
+#[derive(Debug)]
+struct Kitsune2MemoryOpStoreInner<MemOp> {
     /// The stored op data.
-    pub op_list: HashMap<OpId, MemoryOpRecord>,
+    pub op_list: HashMap<OpId, MemoryOpRecord<MemOp>>,
     /// The time slice hashes.
     pub time_slice_hashes: TimeSliceHashStore,
 }
 
-impl OpStore for Kitsune2MemoryOpStore {
+impl<MemOp: MemoryOp> Default for Kitsune2MemoryOpStoreInner<MemOp> {
+    fn default() -> Self {
+        Self {
+            op_list: Default::default(),
+            time_slice_hashes: Default::default(),
+        }
+    }
+}
+
+impl<MemOp: MemoryOp> OpStore for Kitsune2MemoryOpStore<MemOp> {
     fn process_incoming_ops(
         &self,
         op_list: Vec<Bytes>,
@@ -193,9 +255,15 @@ impl OpStore for Kitsune2MemoryOpStore {
         Box::pin(async move {
             let ops_to_add = op_list
                 .iter()
-                .map(|op| -> serde_json::Result<(OpId, MemoryOpRecord)> {
-                    let op = MemoryOpRecord::from(op.clone());
-                    Ok((op.op_id.clone(), op))
+                .map(|op| -> serde_json::Result<(OpId, MemoryOpRecord<MemOp>)> {
+                    let op = MemOp::from_bytes(op.clone());
+                    let op_id = op.compute_op_id();
+                    let record = MemoryOpRecord {
+                        op_id: op_id.clone(),
+                        stored_at: Timestamp::now(),
+                        op,
+                    };
+                    Ok((op_id, record))
                 })
                 .collect::<Result<Vec<_>, _>>().map_err(|e| {
                 K2Error::other_src("Failed to deserialize op data, are you using `Kitsune2MemoryOp`s?", e)
@@ -225,10 +293,10 @@ impl OpStore for Kitsune2MemoryOpStore {
             let mut candidate_ops = self_lock
                 .op_list
                 .iter()
-                .filter(|(_, op)| {
-                    let loc = op.op_id.loc();
-                    op.created_at() >= start
-                        && op.created_at() < end
+                .filter(|(_, record)| {
+                    let loc = record.op.compute_op_id().loc();
+                    record.created_at() >= start
+                        && record.created_at() < end
                         && arc.contains(loc)
                 })
                 .collect::<Vec<_>>();
@@ -256,13 +324,9 @@ impl OpStore for Kitsune2MemoryOpStore {
             Ok(op_ids
                 .iter()
                 .filter_map(|op_id| {
-                    self_lock.op_list.get(op_id).map(|op| MetaOp {
-                        op_id: op.op_id.clone(),
-                        op_data: MemoryOp {
-                            created_at: op.created_at(),
-                            op_data: op.op_data().to_vec(),
-                        }
-                        .into(),
+                    self_lock.op_list.get(op_id).map(|record| MetaOp {
+                        op_id: op_id.clone(),
+                        op_data: record.op_data().to_vec().into(),
                     })
                 })
                 .collect())
