@@ -74,8 +74,8 @@ impl OpStore for FileOpStore {
             let file_names = op_list
                 .iter()
                 .map(|op| {
-                    let mem_op = MemoryOpRecord::<TestMemoryOp>::from(op.clone());
-                     serde_json::from_slice::<FileData>(mem_op.op_data())
+                    let record = MemoryOpRecord::<TestMemoryOp>::new(op.clone()).unwrap();
+                     serde_json::from_slice::<FileData>(record.op.to_bytes().as_ref())
                         .map(|f| f.name)
                 })
                 .collect::<Result<Vec<_>, _>>().map_err(|e| {

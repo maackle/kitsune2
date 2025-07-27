@@ -2,7 +2,7 @@ use crate::{
     default_test_builder,
     factories::{
         core_fetch::{test::test_utils::make_op, CoreFetch, CoreFetchConfig},
-        MemOpStoreFactory, MemoryOp, TestMemoryOp,
+        MemOpStoreFactory, TestMemoryOp,
     },
 };
 use bytes::Bytes;

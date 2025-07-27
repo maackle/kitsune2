@@ -10,6 +10,7 @@ use kitsune2_api::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -76,15 +77,17 @@ pub struct TestMemoryOp {
 }
 
 impl MemoryOp for TestMemoryOp {
-    fn from_bytes(bytes: Bytes) -> Self {
-        serde_json::from_slice(&bytes)
-            .expect("failed to deserialize MemoryOp from bytes")
+    type Error = Infallible;
+
+    fn from_bytes(bytes: Bytes) -> Result<Self, Infallible> {
+        Ok(serde_json::from_slice(&bytes)
+            .expect("failed to deserialize MemoryOp from bytes"))
     }
 
-    fn to_bytes(&self) -> Bytes {
-        serde_json::to_vec(&self)
+    fn to_bytes(&self) -> Result<Bytes, Infallible> {
+        Ok(serde_json::to_vec(&self)
             .expect("failed to serialize MemoryOp to bytes")
-            .into()
+            .into())
     }
 
     /// Compute the op id for this op.
@@ -101,9 +104,30 @@ impl MemoryOp for TestMemoryOp {
     fn created_at(&self) -> Timestamp {
         self.created_at
     }
+}
 
-    fn op_data(&self) -> &[u8] {
-        self.op_data.as_slice()
+impl TestMemoryOp {
+    /// Deserialize a [TestMemoryOp] from bytes.
+    pub fn from_bytes(bytes: Bytes) -> Self {
+        MemoryOp::from_bytes(bytes).unwrap()
+    }
+
+    /// Serialize a [TestMemoryOp] to bytes.
+    pub fn to_bytes(&self) -> Bytes {
+        MemoryOp::to_bytes(self).unwrap()
+    }
+
+    /// Compute the op id for this op.
+    ///
+    /// Note that this produces predictable op ids for testing purposes.
+    /// It is simply the first 32 bytes of the op data.
+    pub fn compute_op_id(&self) -> OpId {
+        MemoryOp::compute_op_id(self)
+    }
+
+    /// Get the creation timestamp of the op.
+    pub fn created_at(&self) -> Timestamp {
+        self.created_at
     }
 }
 
@@ -150,21 +174,17 @@ impl<MemOp: MemoryOp> MemoryOpRecord<MemOp> {
     pub fn created_at(&self) -> Timestamp {
         self.op.created_at()
     }
-
-    /// Get the op data.
-    pub fn op_data(&self) -> &[u8] {
-        self.op.op_data()
-    }
 }
 
-impl<MemOp: MemoryOp> From<Bytes> for MemoryOpRecord<MemOp> {
-    fn from(value: Bytes) -> Self {
-        let inner = MemOp::from_bytes(value);
-        Self {
+impl<MemOp: MemoryOp> MemoryOpRecord<MemOp> {
+    /// Create a new [MemoryOpRecord] from bytes.
+    pub fn new(value: Bytes) -> Result<Self, MemOp::Error> {
+        let inner = MemOp::from_bytes(value)?;
+        Ok(Self {
             op_id: inner.compute_op_id(),
             stored_at: Timestamp::now(),
             op: inner,
-        }
+        })
     }
 }
 
@@ -188,18 +208,19 @@ impl From<Op> for TestMemoryOp {
 /// This trait is used to ensure that all op implementations are compatible with the mem op store.
 /// It is also used to ensure that the op implementations are serialized and deserialized correctly.
 pub trait MemoryOp:
-    Clone + PartialEq + Send + Sync + std::fmt::Debug + 'static
+    Clone + PartialEq + Send + Sync + Into<StoredOp> + std::fmt::Debug + 'static
 {
+    /// The error for serializing and deserializing the op.
+    type Error: std::fmt::Display + std::fmt::Debug + 'static + Send + Sync;
+
     /// Deserialize an op from bytes.
-    fn from_bytes(bytes: Bytes) -> Self;
+    fn from_bytes(bytes: Bytes) -> Result<Self, Self::Error>;
     /// Serialize an op to bytes.
-    fn to_bytes(&self) -> Bytes;
+    fn to_bytes(&self) -> Result<Bytes, Self::Error>;
     /// Compute the op id for this op.
     fn compute_op_id(&self) -> OpId;
     /// Get the creation timestamp of the op.
     fn created_at(&self) -> Timestamp;
-    /// Get the op data.
-    fn op_data(&self) -> &[u8];
 }
 
 /// The in-memory op store implementation for Kitsune2.
@@ -255,8 +276,8 @@ impl<MemOp: MemoryOp> OpStore for Kitsune2MemoryOpStore<MemOp> {
         Box::pin(async move {
             let ops_to_add = op_list
                 .iter()
-                .map(|op| -> serde_json::Result<(OpId, MemoryOpRecord<MemOp>)> {
-                    let op = MemOp::from_bytes(op.clone());
+                .map(|op| -> Result<(OpId, MemoryOpRecord<MemOp>), MemOp::Error> {
+                    let op = MemOp::from_bytes(op.clone())?;
                     let op_id = op.compute_op_id();
                     let record = MemoryOpRecord {
                         op_id: op_id.clone(),
@@ -266,7 +287,7 @@ impl<MemOp: MemoryOp> OpStore for Kitsune2MemoryOpStore<MemOp> {
                     Ok((op_id, record))
                 })
                 .collect::<Result<Vec<_>, _>>().map_err(|e| {
-                K2Error::other_src("Failed to deserialize op data, are you using `Kitsune2MemoryOp`s?", e)
+                K2Error::other("Failed to deserialize op data, are you using `Kitsune2MemoryOp`s?")
             })?;
 
             let mut op_ids = Vec::with_capacity(ops_to_add.len());
@@ -306,7 +327,11 @@ impl<MemOp: MemoryOp> OpStore for Kitsune2MemoryOpStore<MemOp> {
                 candidate_ops
                     .iter()
                     .map(|(op_id, record)| {
-                        used_bytes += record.op_data().len() as u32;
+                        used_bytes += record
+                            .op
+                            .to_bytes()
+                            .map(|b| b.len() as u32)
+                            .unwrap_or(0);
                         (*op_id).clone()
                     })
                     .collect(),
@@ -326,7 +351,7 @@ impl<MemOp: MemoryOp> OpStore for Kitsune2MemoryOpStore<MemOp> {
                 .filter_map(|op_id| {
                     self_lock.op_list.get(op_id).map(|record| MetaOp {
                         op_id: op_id.clone(),
-                        op_data: record.op_data().to_vec().into(),
+                        op_data: record.op.to_bytes().unwrap().into(),
                     })
                 })
                 .collect())
@@ -374,13 +399,17 @@ impl<MemOp: MemoryOp> OpStore for Kitsune2MemoryOpStore<MemOp> {
             let mut last_op_timestamp = None;
             let op_ids = candidate_ops
                 .into_iter()
-                .take_while(|op| {
-                    let data_len = op.op_data().len() as u32;
+                .take_while(|record| {
+                    let data_len = record
+                        .op
+                        .to_bytes()
+                        .map(|b| b.len() as u32)
+                        .unwrap_or(0);
                     if total_bytes + data_len <= limit_bytes {
                         total_bytes += data_len;
                         true
                     } else {
-                        last_op_timestamp = Some(op.stored_at);
+                        last_op_timestamp = Some(record.stored_at);
                         false
                     }
                 })
