@@ -103,7 +103,7 @@ impl BootstrapFactory for CoreBootstrapFactory {
         &self,
         builder: Arc<Builder>,
         peer_store: DynPeerStore,
-        space: SpaceId,
+        space_id: SpaceId,
     ) -> BoxFut<'static, K2Result<DynBootstrap>> {
         Box::pin(async move {
             let config: CoreBootstrapModConfig =
@@ -112,7 +112,7 @@ impl BootstrapFactory for CoreBootstrapFactory {
                 builder,
                 config.core_bootstrap,
                 peer_store,
-                space,
+                space_id,
             ));
             Ok(out)
         })
@@ -264,7 +264,7 @@ async fn push_task(
 async fn poll_task(
     builder: Arc<Builder>,
     config: CoreBootstrapConfig,
-    space: SpaceId,
+    space_id: SpaceId,
     peer_store: DynPeerStore,
     auth_material: Arc<Option<kitsune2_bootstrap_client::AuthMaterial>>,
 ) {
@@ -278,12 +278,12 @@ async fn poll_task(
         match tokio::task::spawn_blocking({
             let auth_material = auth_material.clone();
             let server_url = server_url.clone();
-            let space = space.clone();
+            let space_id = space_id.clone();
             let verifier = builder.verifier.clone();
             move || {
                 kitsune2_bootstrap_client::blocking_get_auth(
                     server_url,
-                    space.clone(),
+                    space_id.clone(),
                     verifier,
                     auth_material.as_ref().as_ref(),
                 )
