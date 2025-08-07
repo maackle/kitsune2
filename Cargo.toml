@@ -105,7 +105,7 @@ rustls = { version = "0.23", default-features = false }
 # embedded in the bootstrap server and to test the tx5 integration
 sbd-server = { version = "0.3.2" }
 # axum-server integration with the SBD server
-tokio-rustls = "0.26"
+tokio-rustls = { version = "0.26", default-features = false }
 # for generating JSON schemas to help with checking configuration
 schemars = { version = "0.9", features = ["preserve_order"] }
 # Used in the showcase CLI
