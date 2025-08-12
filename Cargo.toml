@@ -84,7 +84,7 @@ tempfile = "3.14.0"
 # kitsune2 internally uses a mix of std::io::Error and thiserror derivation.
 thiserror = "2.0.3"
 # ureq is used in the bootstrap client module.
-ureq = "3.0"
+ureq = { version = "3.0", default-features = false }
 # url validation used by the api crate.
 url = "2.5.4"
 # kitsune2 uses tracing to log events. A consumer can choose any subscriber
