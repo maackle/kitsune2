@@ -10,6 +10,7 @@ members = [
   "crates/kitsune2_showcase",
   "crates/test_utils",
   "crates/tool_proto_build",
+  "crates/transport_iroh",
   "crates/transport_tx5",
 ]
 
