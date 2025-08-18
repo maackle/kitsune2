@@ -233,9 +233,9 @@ impl Tx5Transport {
                 }),
             )),
             timeout: std::time::Duration::from_secs(config.timeout_s as u64),
-            backend_module: tx5::backend::BackendModule::LibDataChannel,
+            backend_module: tx5::backend::BackendModule::default(),
             backend_module_config: Some(
-                tx5::backend::BackendModule::LibDataChannel.default_config(),
+                tx5::backend::BackendModule::default().default_config(),
             ),
             initial_webrtc_config: serde_json::to_string(&config.webrtc_config)
                 .map_err(|e| {
@@ -302,6 +302,7 @@ impl TxImp for Tx5Transport {
                     .handler
                     .set_unresponsive(peer.clone(), Timestamp::now())
                     .await;
+                self.ep.close(&peer.to_peer_url()?);
                 return Err(K2Error::other_src(
                     format!("tx5 send error to peer at url {peer}"),
                     e,

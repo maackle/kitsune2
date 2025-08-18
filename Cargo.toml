@@ -17,7 +17,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.10"
+version = "0.1.14"
 authors = ["Holochain Core Dev Team <devcore@holochain.org>"]
 homepage = "https://github.com/holochain/kitsune2"
 keywords = ["holochain", "kitsune", "p2p", "dht", "networking"]
@@ -92,9 +92,9 @@ url = "2.5.4"
 # to receive these logs.
 tracing = "0.1"
 # for init config
-tx5-core = "0.3.6"
+tx5-core = "0.3.11"
 # for the transport_tx5 crate
-tx5 = { version = "0.3.6", default-features = false }
+tx5 = { version = "0.3.11", default-features = false }
 # TLS support for the bootstrap server
 axum-server = { version = "0.7.1", default-features = false }
 # TLS support for the bootstrap server

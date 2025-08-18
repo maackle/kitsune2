@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.14] - 2025-08-15
+
+### Changed
+
+- Require at least tx5 0.3.11 for bug fixes
+- Downgrade some common tracing logs from info to debug level to reduce noise in logs
+- Add more tracing for prune and insert operations
+- Support the go-pion backend for tx5 as an optional configuration
+
+### Fixed
+
+- Ensure the gossip initiate loop will always progress even if the fetch queue does not notify it
+- Fetch should not error when too many messages have been received
+- Attempt to make `two_new_agents_sync` less flaky on macos on CI
+- Close connections when marking a peer unresponsive
+
+## [0.1.13] - 2025-08-08
+
+### Changed
+
+- Update tx5 to 0.3.7
+
+## [0.1.12] - 2025-07-30
+
+### Fixed
+
+- Out of bounds panic in the DHT time module caused by a wrong bounds check
+
+## [0.1.11] - 2025-07-28
+
+### Changed
+
+- Allow a dedicated override for `OpId`
+- Downgrade "no peers" gossip tracing messages from info to debug because they're too noisy when no other peers are available on the network
+
 ## [0.1.10] - 2025-07-23
 
 ### Changed
