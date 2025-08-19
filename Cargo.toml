@@ -17,7 +17,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.14"
+version = "0.1.15"
 authors = ["Holochain Core Dev Team <devcore@holochain.org>"]
 homepage = "https://github.com/holochain/kitsune2"
 keywords = ["holochain", "kitsune", "p2p", "dht", "networking"]
@@ -34,11 +34,11 @@ panic = "abort"
 [workspace.dependencies]
 # Self dependencies for workspace crates to depend on each other.
 # For example, most crates will depend on the api crate.
-kitsune2 = { version = "0.1.9", path = "crates/kitsune2" }
+kitsune2 = { version = "0.1.9", path = "crates/kitsune2", default-features = false }
 kitsune2_api = { version = "0.1.9", path = "crates/api" }
 kitsune2_dht = { version = "0.1.9", path = "crates/dht" }
 kitsune2_gossip = { version = "0.1.9", path = "crates/gossip" }
-kitsune2_transport_tx5 = { version = "0.1.9", path = "crates/transport_tx5" }
+kitsune2_transport_tx5 = { version = "0.1.9", path = "crates/transport_tx5", default-features = false }
 kitsune2_transport_iroh = { version = "0.1.9", path = "crates/transport_iroh" }
 kitsune2_bootstrap_client = { version = "0.1.9", path = "crates/bootstrap_client" }
 
