@@ -32,7 +32,7 @@ async fn main() {
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
     tracing_subscriber::fmt().with_writer(non_blocking).init();
 
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     let args = <Args as clap::Parser>::parse();
     let nick = args.nick.clone();

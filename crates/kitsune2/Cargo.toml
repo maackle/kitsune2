@@ -20,7 +20,7 @@ bytes = { workspace = true }
 kitsune2_api = { workspace = true }
 kitsune2_core = { workspace = true }
 kitsune2_gossip = { workspace = true }
-kitsune2_transport_tx5 = { workspace = true }
+kitsune2_transport_iroh = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 
 # Feature: schema
@@ -35,14 +35,11 @@ tokio = { workspace = true, features = ["test-util"] }
 jsonschema = { workspace = true }
 
 [features]
-default = ["datachannel-vendored"]
-
-datachannel-vendored = ["kitsune2_transport_tx5/datachannel-vendored"]
 
 schema = [
   "dep:schemars",
   "dep:serde_json",
   "kitsune2_core/schema",
   "kitsune2_gossip/schema",
-  "kitsune2_transport_tx5/schema",
+  # "kitsune2_transport_iroh/schema",
 ]

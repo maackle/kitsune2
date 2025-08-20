@@ -11,7 +11,6 @@ members = [
   "crates/test_utils",
   "crates/tool_proto_build",
   "crates/transport_iroh",
-  "crates/transport_tx5",
 ]
 
 resolver = "2"
@@ -39,7 +38,7 @@ kitsune2 = { version = "0.3.0-dev.1", path = "crates/kitsune2" }
 kitsune2_api = { version = "0.3.0-dev.1", path = "crates/api" }
 kitsune2_dht = { version = "0.3.0-dev.1", path = "crates/dht" }
 kitsune2_gossip = { version = "0.3.0-dev.1", path = "crates/gossip" }
-kitsune2_transport_tx5 = { version = "0.3.0-dev.1", path = "crates/transport_tx5" }
+kitsune2_transport_iroh = { version = "0.3.0-dev.1", path = "crates/transport_iroh" }
 kitsune2_bootstrap_client = { version = "0.3.0-dev.1", path = "crates/bootstrap_client" }
 
 # used by bootstrap_srv for mpmc worker queue pattern.
@@ -95,10 +94,6 @@ tracing = "0.1"
 tracing-appender = "0.2.3"
 # Used in testing and the showcase app to output tracing
 tracing-subscriber = "0.3"
-# for init config
-tx5-core = "0.5.0"
-# for the transport_tx5 crate
-tx5 = { version = "0.5.0", default-features = false }
 # TLS support for the bootstrap server
 axum-server = { version = "0.7.1", default-features = false }
 # TLS support for the bootstrap server

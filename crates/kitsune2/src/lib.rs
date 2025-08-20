@@ -18,7 +18,7 @@ use kitsune2_core::{
     Ed25519Verifier,
 };
 use kitsune2_gossip::K2GossipFactory;
-use kitsune2_transport_tx5::Tx5TransportFactory;
+use kitsune2_transport_iroh::IrohTransportFactory;
 
 /// Construct a default production builder for Kitsune2.
 ///
@@ -28,7 +28,7 @@ use kitsune2_transport_tx5::Tx5TransportFactory;
 /// - `peer_store` - The default peer store is [factories::MemPeerStoreFactory].
 /// - `bootstrap` - The default bootstrap is [factories::CoreBootstrapFactory].
 /// - `fetch` - The default fetch module is [factories::CoreFetchFactory].
-/// - `transport` - The default transport is [Tx5TransportFactory].
+/// - `transport` - The default transport is [IrohTransportFactory].
 /// - `op_store` - The default op store is [MemOpStoreFactory].
 ///                Note: you will likely want to implement your own op store.
 /// - `peer_meta_store` - The default peer meta store is [factories::MemPeerMetaStoreFactory].
@@ -48,7 +48,7 @@ pub fn default_builder() -> Builder {
         peer_store: factories::MemPeerStoreFactory::create(),
         bootstrap: factories::CoreBootstrapFactory::create(),
         fetch: factories::CoreFetchFactory::create(),
-        transport: Tx5TransportFactory::create(),
+        transport: IrohTransportFactory::create(),
         op_store: MemOpStoreFactory::create(),
         peer_meta_store: factories::MemPeerMetaStoreFactory::create(),
         gossip: K2GossipFactory::create(),
