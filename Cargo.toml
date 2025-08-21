@@ -10,7 +10,6 @@ members = [
   "crates/kitsune2_showcase",
   "crates/test_utils",
   "crates/tool_proto_build",
-  "crates/transport_tx5",
   "crates/transport_iroh",
 ]
 
@@ -40,7 +39,6 @@ kitsune2_api = { version = "0.3.0-dev.1", path = "crates/api" }
 kitsune2_dht = { version = "0.3.0-dev.1", path = "crates/dht" }
 kitsune2_gossip = { version = "0.3.0-dev.1", path = "crates/gossip" }
 kitsune2_transport_iroh = { version = "0.3.0-dev.1", path = "crates/transport_iroh", default-features = false }
-kitsune2_transport_tx5 = { version = "0.3.0-dev.1", path = "crates/transport_tx5", default-features = false }
 kitsune2_bootstrap_client = { version = "0.3.0-dev.1", path = "crates/bootstrap_client" }
 
 # used by bootstrap_srv for mpmc worker queue pattern.
@@ -96,10 +94,6 @@ tracing = "0.1"
 tracing-appender = "0.2.3"
 # Used in testing and the showcase app to output tracing
 tracing-subscriber = "0.3"
-# for init config
-tx5-core = "0.7.1"
-# for the transport_tx5 crate
-tx5 = { version = "0.7.1", default-features = false }
 # TLS support for the bootstrap server
 axum-server = { version = "0.7.1", default-features = false }
 # TLS support for the bootstrap server
@@ -141,8 +135,8 @@ rcgen = "0.13"
 jsonschema = "0.30.0"
 
 [patch.crates-io]
-#sbd-server = { path = "../sbd/rust/sbd-server" }
-#sbd-client = { path = "../sbd/rust/sbd-client" }
+sbd-server = { git = "https://github.com/maackle/sbd.git" }
+sbd-client = { git = "https://github.com/maackle/sbd.git" }
 #sbd-e2e-crypto-client = { path = "../sbd/rust/sbd-e2e-crypto-client" }
 #tx5-core = { path = "../tx5/crates/tx5-core" }
 #tx5 = { path = "../tx5/crates/tx5" }

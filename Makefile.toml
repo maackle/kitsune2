@@ -38,7 +38,7 @@ command = "cargo"
 args = [
   "test",
   "--package",
-  "kitsune2_transport_tx5",
+  "kitsune2_transport_iroh",
   "--package",
   "kitsune2",
   "--no-default-features",

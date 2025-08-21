@@ -3,7 +3,7 @@ use kitsune2_core::factories::{
     CoreSpaceModConfig, MemBootstrapModConfig, MemPeerStoreModConfig,
 };
 use kitsune2_gossip::K2GossipModConfig;
-use kitsune2_transport_tx5::Tx5TransportModConfig;
+use kitsune2_transport_iroh::IrohTransportModConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +24,7 @@ struct K2Config {
     #[serde(flatten)]
     k2_gossip: Option<K2GossipModConfig>,
     #[serde(flatten)]
-    tx5_transport: Option<Tx5TransportModConfig>,
+    iroh_transport: Option<IrohTransportModConfig>,
 }
 
 const CURRENT_VALUE: &str = r#"
