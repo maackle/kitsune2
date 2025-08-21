@@ -15,6 +15,10 @@ pub struct Builder {
     /// The [Verifier] to use for this Kitsune2 instance.
     pub verifier: DynVerifier,
 
+    /// Any auth_material required to connect to
+    /// sbd/signal and bootstrap services.
+    pub auth_material: Option<Vec<u8>>,
+
     /// The [KitsuneFactory] to be used for creating
     /// [Kitsune] module instances.
     pub kitsune: DynKitsuneFactory,
@@ -58,6 +62,9 @@ pub struct Builder {
     /// The [PublishFactory] to be used for creating [Publish]
     /// instances
     pub publish: DynPublishFactory,
+
+    /// The [`BlocksFactory`] to be used for creating [`Blocks`] instances.
+    pub blocks: DynBlocksFactory,
 }
 
 impl Builder {
@@ -70,6 +77,7 @@ impl Builder {
             let Self {
                 config,
                 verifier: _,
+                auth_material: _,
                 kitsune,
                 space,
                 peer_store,
@@ -81,6 +89,7 @@ impl Builder {
                 gossip,
                 local_agent_store,
                 publish,
+                blocks,
             } = &mut self;
 
             kitsune.default_config(config)?;
@@ -94,6 +103,7 @@ impl Builder {
             gossip.default_config(config)?;
             local_agent_store.default_config(config)?;
             publish.default_config(config)?;
+            blocks.default_config(config)?;
 
             config.mark_defaults_set();
         }
@@ -114,6 +124,7 @@ impl Builder {
         self.gossip.validate_config(&self.config)?;
         self.local_agent_store.validate_config(&self.config)?;
         self.publish.validate_config(&self.config)?;
+        self.blocks.validate_config(&self.config)?;
 
         self.config.mark_validated();
 

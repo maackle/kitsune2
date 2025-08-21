@@ -4,6 +4,7 @@ version.workspace = true
 description = "The Tx5-based transport implementation for kitsune2"
 license.workspace = true
 homepage.workspace = true
+repository.workspace = true
 documentation = "https://docs.rs/kitsune2_transport_tx5"
 authors.workspace = true
 keywords.workspace = true
@@ -15,18 +16,29 @@ base64 = { workspace = true }
 bytes = { workspace = true }
 kitsune2_api = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tracing = { workspace = true }
 tx5-core = { workspace = true }
 tx5 = { workspace = true, default-features = false }
 url = { workspace = true }
 
+# Feature: schema
+schemars = { workspace = true, optional = true }
+# Feature: test-utils
+kitsune2_test_utils = { workspace = true, optional = true }
+# Feature: test-utils
+sbd-server = { workspace = true, optional = true }
+# Feature: test-utils
+kitsune2_core = { workspace = true, optional = true }
+
 [dev-dependencies]
-kitsune2_core = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
 kitsune2_test_utils = { workspace = true }
 sbd-server = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
+kitsune2_core = { workspace = true }
+kitsune2_transport_tx5 = { path = ".", default-features = false, features = [
+  "test-utils",
+] }
 
 [features]
 default = ["datachannel-vendored"]
@@ -44,3 +56,7 @@ backend-go-pion = ["tx5/backend-go-pion"]
 # Unless you have a build issue or other reason to use your own datachannel library, consider
 # using this feature.
 datachannel-vendored = ["backend-libdatachannel", "tx5/datachannel-vendored"]
+
+schema = ["dep:schemars", "tx5/schema"]
+
+test-utils = ["dep:kitsune2_test_utils", "dep:sbd-server", "dep:kitsune2_core"]

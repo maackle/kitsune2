@@ -8,11 +8,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: taiki-e/install-action@v2
         with:
-          tool: taplo-cli@0.9.3
+          tool: cargo-make@0.37.24
 
       - uses: Swatinem/rust-cache@v2
 
@@ -20,19 +20,10 @@ jobs:
       - name: cmake
         uses: jwlawson/actions-setup-cmake@v2
         with:
-          cmake-version: '3.31.x'
+          cmake-version: "3.31.x"
 
-      - name: Toml format
-        run: make static-toml
-
-      - name: Format
-        run: make fmt
-
-      - name: Lint
-        run: make clippy
-
-      - name: Doc
-        run: make doc
+      - name: Static
+        run: cargo make static
 
   test:
     needs: static
@@ -44,12 +35,21 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Go Toolchain
         uses: actions/setup-go@v5
         with:
-          go-version: '=1.24.6'
+          go-version: "=1.24.6"
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make@0.37.24
+
+      - name: Go Toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: "=1.24.6"
 
       - uses: Swatinem/rust-cache@v2
 
@@ -57,21 +57,15 @@ jobs:
       - name: cmake
         uses: jwlawson/actions-setup-cmake@v2
         with:
-          cmake-version: '3.31.x'
-
-      - name: Build
-        run: make build
+          cmake-version: "3.31.x"
 
       - name: Test
         run: |
-          make test
-          cargo test \
-            --package kitsune2_transport_tx5 \
-            --package kitsune2 \
-            --no-default-features \
-            --features backend-go-pion \
-            -- \
-            --nocapture
+          cargo make test
+          cargo make test-go-pion
+
+      - name: Examples
+        run: cargo run --example schema --features schema
 
   test-windows:
     needs: static
@@ -83,12 +77,21 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Go Toolchain
         uses: actions/setup-go@v5
         with:
-          go-version: '=1.24.6'
+          go-version: "=1.24.6"
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make@0.37.24
+
+      - name: Go Toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: "=1.24.6"
 
       - uses: Swatinem/rust-cache@v2
 
@@ -96,25 +99,20 @@ jobs:
       - name: cmake
         uses: jwlawson/actions-setup-cmake@v2
         with:
-          cmake-version: '3.31.x'
+          cmake-version: "3.31.x"
 
-      - uses: johnwason/vcpkg-action@v6
+      - uses: johnwason/vcpkg-action@v7
         with:
           triplet: x64-windows-release
           token: ${{ github.token }}
           manifest-dir: ${{ github.workspace }}/.github/manifest
           github-binarycache: true
 
-      - name: Build
-        run: |-
-          $env:SODIUM_LIB_DIR="$(pwd)\vcpkg\packages\libsodium_x64-windows-release\lib"
-          make build
-
       - name: Test
         run: |-
           $env:SODIUM_LIB_DIR="$(pwd)\vcpkg\packages\libsodium_x64-windows-release\lib"
-          make test
-          cargo test --package kitsune2_transport_tx5 --package kitsune2 --no-default-features --features backend-go-pion -- --nocapture
+          cargo make test
+          cargo make test-go-pion
 
   nix-build:
     needs: static
@@ -126,26 +124,40 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: cachix/install-nix-action@v31
 
       - uses: cachix/cachix-action@v16
         with:
           name: holochain-wind-tunnel
-          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
 
       - run: nix build --verbose -L .#bootstrap-srv
 
-  docker-build:
+  docker-build-bootstrap:
     needs: static
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build
-        run: docker buildx build .
+        run: docker buildx build -f docker/kitsune2_bootstrap_srv/Dockerfile .
+
+  docker-build-bootstrap-auth-test:
+    needs: static
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build
+        run: docker buildx build -f docker/kitsune2_test_auth_hook_server/Dockerfile .
+
+  changelog-preview-comment:
+    name: Add comment of changelog preview
+    uses: holochain/actions/.github/workflows/changelog-preview-comment.yml@v1.2.0
 
   ci_pass:
     if: ${{ always() }}

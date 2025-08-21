@@ -5,8 +5,6 @@ use crate::{
 };
 use bytes::Bytes;
 use futures::future::BoxFuture;
-#[cfg(feature = "mockall")]
-use mockall::automock;
 use std::cmp::Ordering;
 use std::sync::Arc;
 
@@ -66,7 +64,7 @@ impl PartialOrd for StoredOp {
 }
 
 /// The API that a kitsune2 host must implement to provide data persistence for kitsune2.
-#[cfg_attr(any(test, feature = "mockall"), automock)]
+#[cfg_attr(any(test, feature = "mockall"), mockall::automock)]
 pub trait OpStore: 'static + Send + Sync + std::fmt::Debug {
     /// Process incoming ops.
     ///
@@ -84,8 +82,8 @@ pub trait OpStore: 'static + Send + Sync + std::fmt::Debug {
     ///
     /// # Returns
     ///
-    /// - As many op ids as can be returned within the `limit_bytes` limit, within the arc and time
-    ///   bounds.
+    /// - The op ids that are stored in the given arc and time range. Where the start time is
+    ///   inclusive and the end time is exclusive.
     /// - The total size of the op data that is pointed to by the returned op ids.
     fn retrieve_op_hashes_in_time_slice(
         &self,
@@ -197,7 +195,7 @@ pub trait OpStoreFactory: 'static + Send + Sync + std::fmt::Debug {
     fn create(
         &self,
         builder: Arc<builder::Builder>,
-        space: SpaceId,
+        space_id: SpaceId,
     ) -> BoxFut<'static, K2Result<DynOpStore>>;
 }
 

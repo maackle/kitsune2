@@ -40,37 +40,63 @@ impl SigUrlExt for &str {
 
 /// Tx5Transport configuration types.
 pub mod config {
+    use tx5::WebRtcConfig;
+
     /// Configuration parameters for [Tx5TransportFactory](super::Tx5TransportFactory).
     #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(rename_all = "camelCase")]
     pub struct Tx5TransportConfig {
         /// Allow connecting to plaintext (ws) signal server
         /// instead of the default requiring TLS (wss).
         ///
         /// Default: false.
+        #[cfg_attr(feature = "schema", schemars(default))]
         pub signal_allow_plain_text: bool,
 
         /// The url of the sbd signal server. E.g. `wss://sbd.kitsu.ne`.
         pub server_url: String,
 
         /// The internal time in seconds to use as a maximum for operations,
-        /// connecting, and idleing. (Default: 60s).
+        /// connecting, and idleing.
+        ///
+        /// Default: 60s.
+        #[cfg_attr(feature = "schema", schemars(default))]
         pub timeout_s: u32,
 
         /// WebRTC peer connection config.
         ///
-        /// Passed directly to the current WebRTC backend without further processing.
-        pub webrtc_config: serde_json::Value,
+        /// Configuration passed to the selected networking implementation.
+        ///
+        /// Although the default configuration for this is empty, and that is a valid configuration,
+        /// it is recommended to provide ICE servers.
+        ///
+        /// Default: empty configuration
+        #[cfg_attr(feature = "schema", schemars(default))]
+        pub webrtc_config: WebRtcConfig,
 
         /// If true, tracing logs from the backend webrtc library will be
         /// included.
+        #[cfg_attr(feature = "schema", schemars(default))]
         pub tracing_enabled: bool,
 
         /// The minimum ephemeral udp port to bind.
+        #[cfg_attr(feature = "schema", schemars(default))]
         pub ephemeral_udp_port_min: Option<u16>,
 
         /// The maximum ephemeral udp port to bind.
+        #[cfg_attr(feature = "schema", schemars(default))]
         pub ephemeral_udp_port_max: Option<u16>,
+
+        /// Forces the network transport to use a relayed connection instead of WebRTC.
+        ///
+        /// This is only intended for testing and is expected to degrade the performance of the
+        /// network transport. It is useful for the developers of a Kitsune2 host application to be
+        /// able to verify that their application runs correctly without direct connections. It is
+        /// never desirable in production to force the use of a rate-limited, relayed connection
+        /// where a direct WebRTC connection is possible.
+        #[cfg_attr(feature = "schema", schemars(default))]
+        pub danger_force_signal_relay: bool,
     }
 
     impl Default for Tx5TransportConfig {
@@ -79,16 +105,21 @@ pub mod config {
                 signal_allow_plain_text: false,
                 server_url: "<wss://your.sbd.url>".into(),
                 timeout_s: 60,
-                webrtc_config: serde_json::json!({}),
+                webrtc_config: WebRtcConfig {
+                    ice_servers: vec![],
+                    ice_transport_policy: Default::default(),
+                },
                 tracing_enabled: false,
                 ephemeral_udp_port_min: None,
                 ephemeral_udp_port_max: None,
+                danger_force_signal_relay: false,
             }
         }
     }
 
     /// Module-level configuration for Tx5Transport.
     #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(rename_all = "camelCase")]
     pub struct Tx5TransportModConfig {
         /// Tx5Transport configuration.
@@ -97,6 +128,7 @@ pub mod config {
 }
 
 pub use config::*;
+pub use tx5::{IceServers, WebRtcConfig};
 
 /// Provides a Kitsune2 transport module based on the Tx5 crate.
 #[derive(Debug)]
@@ -160,9 +192,12 @@ impl TransportFactory for Tx5TransportFactory {
             let _ = tx5_init_config.set_as_global_default();
 
             let handler = TxImpHnd::new(handler);
-            let imp =
-                Tx5Transport::create(config.tx5_transport, handler.clone())
-                    .await?;
+            let imp = Tx5Transport::create(
+                config.tx5_transport,
+                handler.clone(),
+                builder.auth_material.clone(),
+            )
+            .await?;
             Ok(DefaultTransport::create(&handler, imp))
         })
     }
@@ -191,12 +226,14 @@ impl Tx5Transport {
     pub async fn create(
         config: Tx5TransportConfig,
         handler: Arc<TxImpHnd>,
+        auth_material: Option<Vec<u8>>,
     ) -> K2Result<DynTxImp> {
         let (pre_send, pre_recv) = tokio::sync::mpsc::channel::<PreCheck>(1024);
 
         let preflight_send_handler = handler.clone();
         let tx5_config = Arc::new(tx5::Config {
             signal_allow_plain_text: config.signal_allow_plain_text,
+            signal_auth_material: auth_material,
             preflight: Some((
                 Arc::new(move |peer_url| {
                     // gather any preflight data, and send to remote
@@ -237,10 +274,8 @@ impl Tx5Transport {
             backend_module_config: Some(
                 tx5::backend::BackendModule::default().default_config(),
             ),
-            initial_webrtc_config: serde_json::to_string(&config.webrtc_config)
-                .map_err(|e| {
-                    K2Error::other_src("failed to serialize webrtc config", e)
-                })?,
+            initial_webrtc_config: config.webrtc_config,
+            danger_force_signal_relay: config.danger_force_signal_relay,
             ..Default::default()
         });
 
@@ -309,6 +344,17 @@ impl TxImp for Tx5Transport {
                 ));
             }
             Ok(())
+        })
+    }
+
+    fn get_connected_peers(&self) -> BoxFut<'_, K2Result<Vec<Url>>> {
+        Box::pin(async {
+            Ok(self
+                .ep
+                .get_connected_peer_addresses()
+                .iter()
+                .filter_map(|u| Url::from_str(u).ok())
+                .collect())
         })
     }
 
@@ -427,5 +473,7 @@ async fn evt_task(
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod harness;
 #[cfg(test)]
 mod test;

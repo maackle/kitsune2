@@ -4,6 +4,7 @@ version.workspace = true
 description = "Gossip implementation for kitsune2"
 license.workspace = true
 homepage.workspace = true
+repository.workspace = true
 documentation = "https://docs.rs/kitsune2_gossip"
 authors.workspace = true
 keywords.workspace = true
@@ -25,6 +26,10 @@ rand = { workspace = true }
 thiserror = { workspace = true }
 futures = { workspace = true }
 
+# Feature: schema
+schemars = { workspace = true, optional = true }
+
+# Feature: test-utils
 kitsune2_test_utils = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -33,12 +38,13 @@ kitsune2_gossip = { path = ".", features = ["test-utils"] }
 kitsune2_api = { workspace = true, features = ["mockall"] }
 kitsune2_core = { workspace = true }
 kitsune2_dht = { workspace = true, features = ["mockall"] }
-kitsune2_transport_tx5 = { workspace = true }
 
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }
 base64 = { workspace = true }
 
 [features]
 sharding = []
 
 test-utils = ["dep:kitsune2_test_utils"]
+
+schema = ["dep:schemars", "kitsune2_core/schema"]

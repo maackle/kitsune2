@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// The inner state for the [K2GossipMemoryOpStore].
+/// The inner state for the K2GossipMemoryOpStore.
 ///
 /// This can be treated as the single op store for a Kitsune2 instance.
 pub type GossipOpStore = Arc<RwLock<Kitsune2MemoryOpStoreInner>>;
@@ -31,7 +31,7 @@ impl OpStoreFactory for K2GossipMemOpStoreFactory {
     fn create(
         &self,
         _builder: Arc<Builder>,
-        _space: SpaceId,
+        _space_id: SpaceId,
     ) -> BoxFut<'static, K2Result<DynOpStore>> {
         let inner = self.store.clone();
         Box::pin(async move {

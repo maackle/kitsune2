@@ -4,7 +4,7 @@
 use base64::Engine;
 use iroh::{
     endpoint::{Connection, VarInt},
-    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, 
+    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl,
 };
 use kitsune2_api::*;
 use std::{
@@ -286,7 +286,9 @@ impl TxImp for IrohTransport {
             let connection = match connection_result {
                 Ok(c) => c,
                 Err(err) => {
-                    tracing::warn!("connect() failed: marking {peer} as unresponsive.");
+                    tracing::warn!(
+                        "connect() failed: marking {peer} as unresponsive."
+                    );
                     self.handler
                         .set_unresponsive(peer, Timestamp::now())
                         .await?;
@@ -310,7 +312,9 @@ impl TxImp for IrohTransport {
                 Ok(s) => s,
 
                 Err(err) => {
-                    tracing::warn!("open_uni() failed: Marking {peer} as unresponsive.");
+                    tracing::warn!(
+                        "open_uni() failed: Marking {peer} as unresponsive."
+                    );
                     self.handler
                         .set_unresponsive(peer, Timestamp::now())
                         .await?;
@@ -357,6 +361,16 @@ impl TxImp for IrohTransport {
                     })
                     .collect(),
             })
+        })
+    }
+
+    fn get_connected_peers(&self) -> BoxFut<'_, K2Result<Vec<Url>>> {
+        Box::pin(async move {
+            let connections = self.connections.lock().await;
+            Ok(connections
+                .keys()
+                .map(|addr| node_addr_to_peer_url(addr.clone()).unwrap())
+                .collect())
         })
     }
 }

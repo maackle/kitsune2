@@ -45,6 +45,7 @@ struct MemTransport {
     this_url: Url,
     task_list: Arc<Mutex<tokio::task::JoinSet<()>>>,
     cmd_send: CmdSend,
+    net_stats: Arc<Mutex<TransportStats>>,
 }
 
 impl Drop for MemTransport {
@@ -66,6 +67,12 @@ impl MemTransport {
         let (cmd_send, cmd_recv) =
             tokio::sync::mpsc::unbounded_channel::<Cmd>();
 
+        let net_stats = Arc::new(Mutex::new(TransportStats {
+            backend: "kitsune2-core-mem".into(),
+            peer_urls: vec![this_url.clone()],
+            connections: vec![],
+        }));
+
         // listen for incoming connections
         let cmd_send2 = cmd_send.clone();
         task_list.lock().unwrap().spawn(async move {
@@ -83,12 +90,14 @@ impl MemTransport {
             this_url.clone(),
             cmd_send.clone(),
             cmd_recv,
+            net_stats.clone(),
         ));
 
         let out: DynTxImp = Arc::new(Self {
             this_url,
             task_list,
             cmd_send,
+            net_stats,
         });
 
         out
@@ -130,14 +139,18 @@ impl TxImp for MemTransport {
         })
     }
 
-    fn dump_network_stats(&self) -> BoxFut<'_, K2Result<TransportStats>> {
+    fn get_connected_peers(&self) -> BoxFut<'_, K2Result<Vec<Url>>> {
+        // The memory transport is always connected to everyone but doesn't
+        // expose who is connected here.
         Box::pin(async move {
-            Ok(TransportStats {
-                backend: "kitsune2-core-mem".to_string(),
-                peer_urls: Vec::with_capacity(0),
-                connections: Vec::with_capacity(0),
-            })
+            Err(K2Error::other(
+                "get_connected_peers is not implemented for the mem transport",
+            ))
         })
+    }
+
+    fn dump_network_stats(&self) -> BoxFut<'_, K2Result<TransportStats>> {
+        Box::pin(async move { Ok(self.net_stats.lock().unwrap().clone()) })
     }
 }
 
@@ -154,22 +167,35 @@ struct DropSend {
     handler: Arc<TxImpHnd>,
     peer: Url,
     reason: Option<String>,
+    net_stats: Arc<Mutex<TransportStats>>,
 }
 
 impl Drop for DropSend {
     fn drop(&mut self) {
+        let peer_str = self.peer.to_string();
+        self.net_stats
+            .lock()
+            .unwrap()
+            .connections
+            .retain(|c| c.pub_key != peer_str);
         self.handler
             .peer_disconnect(self.peer.clone(), self.reason.take());
     }
 }
 
 impl DropSend {
-    fn new(send: DataSend, handler: Arc<TxImpHnd>, peer: Url) -> Self {
+    fn new(
+        send: DataSend,
+        handler: Arc<TxImpHnd>,
+        peer: Url,
+        net_stats: Arc<Mutex<TransportStats>>,
+    ) -> Self {
         Self {
             send,
             handler,
             peer,
             reason: None,
+            net_stats,
         }
     }
 }
@@ -187,8 +213,40 @@ async fn cmd_task(
     this_url: Url,
     cmd_send: CmdSend,
     mut cmd_recv: CmdRecv,
+    net_stats: Arc<Mutex<TransportStats>>,
 ) {
     let mut con_pool = HashMap::new();
+
+    fn ns_ref<Cb: FnOnce(&mut TransportConnectionStats)>(
+        net_stats: &Mutex<TransportStats>,
+        url: &Url,
+        cb: Cb,
+    ) {
+        let url_str = url.to_string();
+
+        let mut lock = net_stats.lock().unwrap();
+
+        for r in lock.connections.iter_mut() {
+            if r.pub_key == url_str {
+                return cb(r);
+            }
+        }
+
+        lock.connections.push(TransportConnectionStats {
+            pub_key: url_str,
+            send_message_count: 0,
+            send_bytes: 0,
+            recv_message_count: 0,
+            recv_bytes: 0,
+            opened_at_s: std::time::SystemTime::UNIX_EPOCH
+                .elapsed()
+                .unwrap()
+                .as_secs(),
+            is_webrtc: false,
+        });
+
+        cb(lock.connections.last_mut().unwrap())
+    }
 
     while let Some(cmd) = cmd_recv.recv().await {
         match cmd {
@@ -216,10 +274,19 @@ async fn cmd_task(
 
                 con_pool.insert(
                     url.clone(),
-                    DropSend::new(data_send, handler.clone(), url),
+                    DropSend::new(
+                        data_send,
+                        handler.clone(),
+                        url,
+                        net_stats.clone(),
+                    ),
                 );
             }
             Cmd::InData(url, data, res) => {
+                ns_ref(&net_stats, &url, |r| {
+                    r.recv_message_count += 1;
+                    r.recv_bytes += data.len() as u64;
+                });
                 if let Err(err) = handler.recv_data(url.clone(), data) {
                     if let Some(mut data_send) = con_pool.remove(&url) {
                         data_send.reason = Some(format!("{err:?}"));
@@ -244,6 +311,10 @@ async fn cmd_task(
                     &url,
                     &this_url,
                 ) {
+                    ns_ref(&net_stats, &url, |r| {
+                        r.send_message_count += 1;
+                        r.send_bytes += data.len() as u64;
+                    });
                     let _ = send.send((data, res));
                 }
             }

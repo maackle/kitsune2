@@ -46,8 +46,13 @@ pub fn spawn_initiate_task(
 
             if local_agents.is_empty() {
                 tracing::warn!("No local agents available, skipping initiation");
-                // Wait a short amount of time before retrying to avoid busy looping
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                // Wait a short amount of time before retrying to avoid busy looping.
+                //
+                // This should be a short wait because it's expected to be a temporary state. The
+                // space should not be running if there are no local agents. Either the space has
+                // just been created and local agents haven't joined yet, or all local agents have
+                // left and the space is about to be shut down.
+                tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;
             }
 
@@ -198,7 +203,7 @@ async fn select_next_target(
         using_overlapping_agents = false;
     }
 
-    let mut possible_targets = select_responsive_and_least_recently_gossiped(
+    let mut possible_target = select_responsive_and_least_recently_gossiped(
         all_agents,
         peer_meta_store.clone(),
         current_time,
@@ -206,7 +211,7 @@ async fn select_next_target(
     .await?;
 
     // We tried using overlapping agents, but they're all on timeout
-    if possible_targets.is_none() && using_overlapping_agents {
+    if possible_target.is_none() && using_overlapping_agents {
         tracing::debug!(
             "All agents with overlapping arcs are on timeout, selecting from all agents"
         );
@@ -214,7 +219,7 @@ async fn select_next_target(
         all_agents = peer_store.get_all().await?.into_iter().collect();
         remove_local_agents(&mut all_agents, &local_agent_ids);
 
-        possible_targets = select_responsive_and_least_recently_gossiped(
+        possible_target = select_responsive_and_least_recently_gossiped(
             all_agents,
             peer_meta_store.clone(),
             current_time,
@@ -222,7 +227,7 @@ async fn select_next_target(
         .await?;
     }
 
-    match possible_targets {
+    match possible_target {
         None => {
             // All options exhausted, give up for now
             tracing::debug!("No agents to gossip with");
@@ -293,7 +298,8 @@ mod tests {
     use kitsune2_core::default_test_builder;
     use kitsune2_dht::SECTOR_SIZE;
     use kitsune2_test_utils::agent::{AgentBuilder, TestLocalAgent};
-    use kitsune2_test_utils::{enable_tracing, space::TEST_SPACE_ID};
+    use kitsune2_test_utils::enable_tracing;
+    use kitsune2_test_utils::space::TEST_SPACE_ID;
     use std::sync::Arc;
 
     struct Harness {
@@ -306,11 +312,16 @@ mod tests {
         async fn create() -> Self {
             let builder =
                 Arc::new(default_test_builder().with_default_config().unwrap());
+            let blocks = builder
+                .blocks
+                .create(builder.clone(), TEST_SPACE_ID)
+                .await
+                .unwrap();
 
             Harness {
                 peer_store: builder
                     .peer_store
-                    .create(builder.clone())
+                    .create(builder.clone(), TEST_SPACE_ID, blocks)
                     .await
                     .unwrap(),
                 local_agent_store: builder

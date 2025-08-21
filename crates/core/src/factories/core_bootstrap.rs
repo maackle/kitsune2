@@ -7,17 +7,22 @@ use std::sync::Arc;
 pub mod config {
     /// Configuration parameters for [CoreBootstrapFactory](super::CoreBootstrapFactory).
     #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(rename_all = "camelCase")]
     pub struct CoreBootstrapConfig {
         /// The url of the kitsune2 bootstrap server. E.g. `https://boot.kitsu.ne`.
         pub server_url: String,
 
         /// Minimum backoff in ms to use for both push and poll retry loops.
+        ///
         /// Default: 5 seconds.
+        #[cfg_attr(feature = "schema", schemars(default))]
         pub backoff_min_ms: u32,
 
         /// Maximum backoff in ms to use for both push and poll retry loops.
+        ///
         /// Default: 5 minutes.
+        #[cfg_attr(feature = "schema", schemars(default))]
         pub backoff_max_ms: u32,
     }
 
@@ -45,6 +50,7 @@ pub mod config {
 
     /// Module-level configuration for CoreBootstrap.
     #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(rename_all = "camelCase")]
     pub struct CoreBootstrapModConfig {
         /// CoreBootstrap configuration.
@@ -93,7 +99,7 @@ impl BootstrapFactory for CoreBootstrapFactory {
         &self,
         builder: Arc<Builder>,
         peer_store: DynPeerStore,
-        space: SpaceId,
+        space_id: SpaceId,
     ) -> BoxFut<'static, K2Result<DynBootstrap>> {
         Box::pin(async move {
             let config: CoreBootstrapModConfig =
@@ -102,7 +108,7 @@ impl BootstrapFactory for CoreBootstrapFactory {
                 builder,
                 config.core_bootstrap,
                 peer_store,
-                space,
+                space_id,
             ));
             Ok(out)
         })
@@ -134,12 +140,20 @@ impl CoreBootstrap {
         peer_store: DynPeerStore,
         space: SpaceId,
     ) -> Self {
+        let auth_material =
+            Arc::new(builder.auth_material.as_ref().map(|auth_material| {
+                kitsune2_bootstrap_client::AuthMaterial::new(
+                    auth_material.clone(),
+                )
+            }));
+
         let (push_send, push_recv) = tokio::sync::mpsc::channel(1024);
 
         let push_task = tokio::task::spawn(push_task(
             config.clone(),
             push_send.clone(),
             push_recv,
+            auth_material.clone(),
         ));
 
         let poll_task = tokio::task::spawn(poll_task(
@@ -147,6 +161,7 @@ impl CoreBootstrap {
             config,
             space.clone(),
             peer_store,
+            auth_material,
         ));
 
         Self {
@@ -180,6 +195,7 @@ async fn push_task(
     config: CoreBootstrapConfig,
     push_send: PushSend,
     mut push_recv: PushRecv,
+    auth_material: Arc<Option<kitsune2_bootstrap_client::AuthMaterial>>,
 ) {
     // Already checked to be a valid URL by the config validation.
     let server_url =
@@ -189,9 +205,16 @@ async fn push_task(
 
     while let Some(info) = push_recv.recv().await {
         match tokio::task::spawn_blocking({
+            let auth_material = auth_material.clone();
             let server_url = server_url.clone();
             let info = info.clone();
-            move || kitsune2_bootstrap_client::blocking_put(server_url, &info)
+            move || {
+                kitsune2_bootstrap_client::blocking_put_auth(
+                    server_url,
+                    &info,
+                    auth_material.as_ref().as_ref(),
+                )
+            }
         })
         .await
         {
@@ -237,8 +260,9 @@ async fn push_task(
 async fn poll_task(
     builder: Arc<Builder>,
     config: CoreBootstrapConfig,
-    space: SpaceId,
+    space_id: SpaceId,
     peer_store: DynPeerStore,
+    auth_material: Arc<Option<kitsune2_bootstrap_client::AuthMaterial>>,
 ) {
     // Already checked to be a valid URL by the config validation.
     let server_url =
@@ -248,14 +272,16 @@ async fn poll_task(
 
     loop {
         match tokio::task::spawn_blocking({
+            let auth_material = auth_material.clone();
             let server_url = server_url.clone();
-            let space = space.clone();
+            let space_id = space_id.clone();
             let verifier = builder.verifier.clone();
             move || {
-                kitsune2_bootstrap_client::blocking_get(
+                kitsune2_bootstrap_client::blocking_get_auth(
                     server_url,
-                    space.clone(),
+                    space_id.clone(),
                     verifier,
+                    auth_material.as_ref().as_ref(),
                 )
             }
         })

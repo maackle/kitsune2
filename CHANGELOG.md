@@ -5,90 +5,173 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.15] - 2025-08-18
-
-### Fixed
-
-- Use default-features = false for transport dependencies
-
-## [0.1.14] - 2025-08-15
+## [0.3.0-dev.1] - 2025-07-24
 
 ### Changed
 
-- Require at least tx5 0.3.11 for bug fixes
-- Downgrade some common tracing logs from info to debug level to reduce noise in logs
-- Add more tracing for prune and insert operations
-- Support the go-pion backend for tx5 as an optional configuration
+- Expose new module configuration for the tx5 transport `danger_force_signal_relay` by @ThetaSinner in [#270](https://github.com/holochain/kitsune2/pull/270)
+- Update tx5 to 0.5.0 by @ThetaSinner
 
-### Fixed
-
-- Ensure the gossip initiate loop will always progress even if the fetch queue does not notify it
-- Fetch should not error when too many messages have been received
-- Attempt to make `two_new_agents_sync` less flaky on macos on CI
-- Close connections when marking a peer unresponsive
-
-## [0.1.13] - 2025-08-08
+## [0.2.11] - 2025-07-02
 
 ### Changed
 
-- Update tx5 to 0.3.7
+- Fix new flags for SBD config on the bootstrap server to be flags rather than arguments by @ThetaSinner in [#259](https://github.com/holochain/kitsune2/pull/259)
 
-## [0.1.12] - 2025-07-30
-
-### Fixed
-
-- Out of bounds panic in the DHT time module caused by a wrong bounds check
-
-## [0.1.11] - 2025-07-28
-
-### Changed
-
-- Allow a dedicated override for `OpId`
-- Downgrade "no peers" gossip tracing messages from info to debug because they're too noisy when no other peers are available on the network
-
-## [0.1.10] - 2025-07-23
-
-### Changed
-
-- Update tx5 to 0.3.6
-
-## [0.1.9] - 2025-06-20
+## [0.2.10] - 2025-07-01
 
 ### Added
 
-- Add changelog for previous versions
-- Add workflow that tags and publishes a release upon merge to main
-- Add a manually-triggered workflow to prepare a release
-- Add common functions to filter unresponsive URLs out of agent
-- Add get/set to mark peer unresponsive in peer meta store
+- Add job to generate changelog preview as a comment on PRs by @cdunster in [#254](https://github.com/holochain/kitsune2/pull/254)
 
 ### Changed
 
-- Match all common unresponsive filter function comments
-- Filter unresponsive peers for gossip
-- Backport faster initial sync 0.1 (#240)
+- Add rate limiting flags to the bootstrap server for configuring SBD by @ThetaSinner in [#257](https://github.com/holochain/kitsune2/pull/257)
+- Reduce the wait time when no local agents are available because it should be a temporary state by @ThetaSinner in [#253](https://github.com/holochain/kitsune2/pull/253)
 
 ### Fixed
 
-- The sharding feature was using old function name
+- Replace flaky functional tests for gossip data limits with more reliable unit tests by @ThetaSinner in [#255](https://github.com/holochain/kitsune2/pull/255)
+- Tests for agents message response handler by @ThetaSinner
+- Tests for handling peer busy messages by @ThetaSinner
+- Clear a warning about unused configuration in gossip functional tests by @ThetaSinner
 
-## [0.1.8] - 2025-05-01
+## [0.2.9] - 2025-06-20
 
-### Changed
+### Added
 
-- Fix bad tx5-core version (#204)
-
-## [0.1.7] - 2025-04-29
-
-### Changed
-
-- Moar tx5 config (#203)
-
-## [0.1.6] - 2025-04-28
+- Add a changelog by @cdunster in [#248](https://github.com/holochain/kitsune2/pull/248)
+- Add workflow that tags and publishes a release upon merge to main by @cdunster in [#245](https://github.com/holochain/kitsune2/pull/245)
+- Add a manually-triggered workflow to prepare a release by @cdunster
 
 ### Changed
 
-- Backport #195 (#196)
+- Bump dependencies by @ThetaSinner in [#251](https://github.com/holochain/kitsune2/pull/251)
+- Update Cargo.toml use repository instead of homepage by @szabgab in [#244](https://github.com/holochain/kitsune2/pull/244)
+
+## First-time Contributors
+
+* @szabgab made their first contribution in [#244](https://github.com/holochain/kitsune2/pull/244)
+
+## [0.2.8] - 2025-06-16
+
+### Added
+
+- Add common functions to filter out unresponsive agents by @jost-s
+- Add method PeerMetaStore::get_all_by_key by @jost-s
+- Add logic to filter unresponsive peers in gossip (#235) by @matthme in [#235](https://github.com/holochain/kitsune2/pull/235)
+- Add get/set to mark peer unresponsive in peer meta store by @jost-s in [#229](https://github.com/holochain/kitsune2/pull/229)
+- Add peer url to error message in tx5 send (#228) by @matthme in [#228](https://github.com/holochain/kitsune2/pull/228)
+
+### Changed
+
+- Check if queue is drained when re-inserting request failed by @jost-s in [#237](https://github.com/holochain/kitsune2/pull/237)
+- Only re-insert requests into queue if their ops are still needed by @jost-s
+- Change mutex unwraps to expects by @jost-s
+- Rectify what get_all_by_key returns by @jost-s
+- Log errors when querying peer meta store for unresponsive urls by @jost-s
+- Simplify flow of outgoing request task by @jost-s
+- Log errors when querying peer meta store for unresponsive urls by @jost-s
+- Check if transport is dropped before checking if url is unresponsive by @jost-s
+- Check that only an unresponsive url's requests are dropped in test by @jost-s
+- Filter peers without url out in filter_unresponsive_agents by @jost-s
+- Rewrite "if x/if not x" to if/else by @jost-s
+- Update comment on unresponsive url by @jost-s
+- Filter unresponsive urls when requesting ops by @jost-s
+- Filter unresponsive urls when publishing by @jost-s
+- Implement PeerMetaStore::get_all_by_key for test store by @jost-s
+- Move long tx5 transport test to integration tests (#236) by @matthme in [#236](https://github.com/holochain/kitsune2/pull/236)
+- Record peer connection failures in the peer meta store (#233) by @matthme in [#233](https://github.com/holochain/kitsune2/pull/233)
+- Modify get/set to mark peer unresponsive in peer meta store by @jost-s in [#234](https://github.com/holochain/kitsune2/pull/234)
+- Bump johnwason/vcpkg-action from 6 to 7 (#232) by @dependabot[bot] in [#232](https://github.com/holochain/kitsune2/pull/232)
+- Faster initiate (#230) by @ThetaSinner in [#230](https://github.com/holochain/kitsune2/pull/230)
+- Notify on fetch queue drained (#227) by @ThetaSinner in [#227](https://github.com/holochain/kitsune2/pull/227)
+- Implement the showcase demo app (#219) by @cdunster in [#219](https://github.com/holochain/kitsune2/pull/219)
+- Permit receiving a burst of gossip initiations (#226) by @ThetaSinner in [#226](https://github.com/holochain/kitsune2/pull/226)
+
+### Fixed
+
+- Send queue drained notification when no requests to be sent is empty by @jost-s
+- Change timeout to 100 ms in unresponsive_urls_are_filtered by @jost-s
+
+### Removed
+
+- Remove only current request from state when url unresponsive by @jost-s
+- Remove backoff and replace with unresponsive function in peer meta store by @jost-s
+
+## [0.2.7] - 2025-05-23
+
+### Changed
+
+- Functioning net stats from mem transport (#225) by @neonphog in [#225](https://github.com/holochain/kitsune2/pull/225)
+- Fix MemBootstrap Space Crossover (#224) by @neonphog in [#224](https://github.com/holochain/kitsune2/pull/224)
+
+## [0.2.6] - 2025-05-15
+
+### Fixed
+
+- Fix authorization (#218) by @neonphog in [#218](https://github.com/holochain/kitsune2/pull/218)
+- Fix test-auth-hook-server docker default cmd (#217) by @neonphog in [#217](https://github.com/holochain/kitsune2/pull/217)
+
+## [0.2.5] - 2025-05-14
+
+### Changed
+
+- Bug fix and auth test binding change (#216) by @neonphog in [#216](https://github.com/holochain/kitsune2/pull/216)
+
+## [0.2.4] - 2025-05-12
+
+### Added
+
+- Add rust-analyzer as a toolchain component (#214) by @cdunster in [#214](https://github.com/holochain/kitsune2/pull/214)
+- Support cargo-make in Nix devShell (#213) by @cdunster in [#213](https://github.com/holochain/kitsune2/pull/213)
+
+### Changed
+
+- Simpler test target (#211) by @ThetaSinner in [#211](https://github.com/holochain/kitsune2/pull/211)
+- Bootstrap-auth-test docker build (#212) by @neonphog in [#212](https://github.com/holochain/kitsune2/pull/212)
+- Close spaces (#208) by @ThetaSinner in [#208](https://github.com/holochain/kitsune2/pull/208)
+
+## [0.2.3] - 2025-05-08
+
+### Added
+
+- Add Nix devShell and direnv support (#207) by @cdunster in [#207](https://github.com/holochain/kitsune2/pull/207)
+
+### Changed
+
+- Authenticate (#198) by @neonphog in [#198](https://github.com/holochain/kitsune2/pull/198)
+- Add cargo make (#193) by @ThetaSinner in [#193](https://github.com/holochain/kitsune2/pull/193)
+- Use Google STUN (#210) by @ThetaSinner in [#210](https://github.com/holochain/kitsune2/pull/210)
+- Fix feature logic for automock (#206) by @ThetaSinner in [#206](https://github.com/holochain/kitsune2/pull/206)
+
+## First-time Contributors
+
+* @cdunster made their first contribution in [#207](https://github.com/holochain/kitsune2/pull/207)
+
+## [0.2.2] - 2025-04-29
+
+### Changed
+
+- Moar tx5 config (#202) by @neonphog in [#202](https://github.com/holochain/kitsune2/pull/202)
+
+## [0.2.1] - 2025-04-29
+
+### Changed
+
+- Tidy dependencies (#201) by @ThetaSinner in [#201](https://github.com/holochain/kitsune2/pull/201)
+- Move server address logging to binary (#199) by @anchalshivank in [#199](https://github.com/holochain/kitsune2/pull/199)
+
+## First-time Contributors
+
+* @anchalshivank made their first contribution in [#199](https://github.com/holochain/kitsune2/pull/199)
+
+## [0.2.0] - 2025-04-28
+
+### Changed
+
+- K2 consistency fixes (#195) by @ThetaSinner in [#195](https://github.com/holochain/kitsune2/pull/195)
+- Add schema support for configuration (#194) by @ThetaSinner in [#194](https://github.com/holochain/kitsune2/pull/194)
 
 ## [0.1.5] - 2025-04-17
 
@@ -299,6 +382,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * @maackle made their first contribution in [#57](https://github.com/holochain/kitsune2/pull/57)
 
+[0.2.8]: https://github.com/holochain/kitsune2/compare/v0.2.7..v0.2.8
+[0.2.7]: https://github.com/holochain/kitsune2/compare/v0.2.6..v0.2.7
+[0.2.6]: https://github.com/holochain/kitsune2/compare/v0.2.5..v0.2.6
+[0.2.5]: https://github.com/holochain/kitsune2/compare/v0.2.4..v0.2.5
+[0.2.4]: https://github.com/holochain/kitsune2/compare/v0.2.3..v0.2.4
+[0.2.3]: https://github.com/holochain/kitsune2/compare/v0.2.2..v0.2.3
+[0.2.2]: https://github.com/holochain/kitsune2/compare/v0.2.1..v0.2.2
+[0.2.1]: https://github.com/holochain/kitsune2/compare/v0.2.0..v0.2.1
+[0.2.0]: https://github.com/holochain/kitsune2/compare/v0.1.5..v0.2.0
 [0.1.8]: https://github.com/holochain/kitsune2/compare/v0.1.7..v0.1.8
 [0.1.7]: https://github.com/holochain/kitsune2/compare/v0.1.6..v0.1.7
 [0.1.6]: https://github.com/holochain/kitsune2/compare/v0.1.5..v0.1.6

@@ -1,6 +1,7 @@
 use kitsune2_api::{
-    AgentInfoSigned, DhtArc, DynLocalAgentStore, DynPeerMetaStore,
-    DynPeerStore, K2Result,
+    AgentId, AgentInfoSigned, BlockTarget, DhtArc, DynBlocks,
+    DynLocalAgentStore, DynPeerMetaStore, DynPeerStore, K2Result,
+    KEY_PREFIX_ROOT, META_KEY_UNRESPONSIVE,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -62,8 +63,8 @@ pub async fn get_all_responsive_remote_agents(
 
 /// Get responsive remote agents by overlapping storage arc.
 ///
-/// Uses the [DynPeerStore] to get agents with overlapping storage arcs, the [DynLocalAgentStore]
-/// to filter out local agents and the [DynPeerMetaStore] to filter out unresponsive agents.
+/// Uses the [DynPeerStore] to get agents with overlapping storage arcs and the [DynLocalAgentStore]
+/// to filter out local agents.
 pub async fn get_responsive_remote_agents_by_overlapping_storage_arc(
     peer_store: DynPeerStore,
     local_agent_store: DynLocalAgentStore,
@@ -80,8 +81,8 @@ pub async fn get_responsive_remote_agents_by_overlapping_storage_arc(
 
 /// Get responsive remote agents near a specific location.
 ///
-/// Uses the [DynPeerStore] to get agents near a location, the [DynLocalAgentStore] to filter
-/// out local agents and the [DynPeerMetaStore] to filter out unresponsive agents.
+/// Uses the [DynPeerStore] to get agents near a location and the [DynLocalAgentStore] to filter
+/// out local agents.
 pub async fn get_responsive_remote_agents_near_location(
     peer_store: DynPeerStore,
     local_agent_store: DynLocalAgentStore,
@@ -116,30 +117,42 @@ async fn filter_unresponsive_agents(
     peer_meta_store: DynPeerMetaStore,
     agent_list: Vec<Arc<AgentInfoSigned>>,
 ) -> K2Result<Vec<Arc<AgentInfoSigned>>> {
-    let mut filtered_list = Vec::new();
-    for agent in agent_list {
-        if let Some(url) = &agent.url {
-            if peer_meta_store
-                .get_unresponsive(url.clone())
-                .await?
-                .is_none()
-            {
-                filtered_list.push(agent);
+    let unresponsive_urls = peer_meta_store
+        .get_all_by_key(
+            format!("{KEY_PREFIX_ROOT}:{META_KEY_UNRESPONSIVE}").to_string(),
+        )
+        .await?;
+
+    Ok(agent_list
+        .into_iter()
+        .filter(|a| {
+            if let Some(url) = a.url.clone() {
+                !unresponsive_urls.contains_key(&url)
+            } else {
+                false
             }
-        }
-    }
-    Ok(filtered_list)
+        })
+        .collect())
+}
+
+/// Block the agent with the provided [`AgentId`] and remove it from the [`crate::PeerStore`].
+pub async fn block_and_remove_agent(
+    peer_store: &DynPeerStore,
+    blocks: &DynBlocks,
+    agent_id: AgentId,
+) -> K2Result<()> {
+    blocks.block(BlockTarget::Agent(agent_id.clone())).await?;
+
+    peer_store.remove(agent_id).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::default_test_builder;
-    use kitsune2_api::{DynLocalAgent, Timestamp, Url};
-    use kitsune2_test_utils::{
-        agent::{AgentBuilder, TestLocalAgent},
-        space::TEST_SPACE_ID,
-    };
+    use kitsune2_api::{BlockTarget, DynLocalAgent, Timestamp, Url};
+    use kitsune2_test_utils::agent::{AgentBuilder, TestLocalAgent};
+    use kitsune2_test_utils::space::TEST_SPACE_ID;
     use std::sync::Arc;
 
     #[tokio::test]
@@ -156,8 +169,16 @@ mod tests {
         let builder =
             Arc::new(default_test_builder().with_default_config().unwrap());
 
-        let peer_store =
-            builder.peer_store.create(builder.clone()).await.unwrap();
+        let blocks = builder
+            .blocks
+            .create(builder.clone(), TEST_SPACE_ID)
+            .await
+            .unwrap();
+        let peer_store = builder
+            .peer_store
+            .create(builder.clone(), TEST_SPACE_ID, blocks)
+            .await
+            .unwrap();
         let local_agent_store = builder
             .local_agent_store
             .create(builder.clone())
@@ -203,8 +224,17 @@ mod tests {
         let builder =
             Arc::new(default_test_builder().with_default_config().unwrap());
 
-        let peer_store =
-            builder.peer_store.create(builder.clone()).await.unwrap();
+        let blocks = builder
+            .blocks
+            .create(builder.clone(), TEST_SPACE_ID)
+            .await
+            .unwrap();
+
+        let peer_store = builder
+            .peer_store
+            .create(builder.clone(), TEST_SPACE_ID, blocks)
+            .await
+            .unwrap();
         let local_agent_store = builder
             .local_agent_store
             .create(builder.clone())
@@ -255,8 +285,17 @@ mod tests {
         let builder =
             Arc::new(default_test_builder().with_default_config().unwrap());
 
-        let peer_store =
-            builder.peer_store.create(builder.clone()).await.unwrap();
+        let blocks = builder
+            .blocks
+            .create(builder.clone(), TEST_SPACE_ID)
+            .await
+            .unwrap();
+
+        let peer_store = builder
+            .peer_store
+            .create(builder.clone(), TEST_SPACE_ID, blocks)
+            .await
+            .unwrap();
         let local_agent_store = builder
             .local_agent_store
             .create(builder.clone())
@@ -294,9 +333,9 @@ mod tests {
         let remote_agent_1 = AgentBuilder::default()
             .with_url(Some(Url::from_str("ws://responsi.ve:80/1").unwrap()))
             .build(TestLocalAgent::default());
-        let remote_agent_2 = AgentBuilder::default()
-            .with_url(Some(Url::from_str("ws://responsi.ve:80/2").unwrap()))
-            .build(TestLocalAgent::default());
+        // Agents without URL are filtered out.
+        let remote_agent_2 =
+            AgentBuilder::default().build(TestLocalAgent::default());
         let local_agent: DynLocalAgent = Arc::new(TestLocalAgent::default());
         let remote_agent_for_local_agent = AgentBuilder::default()
             .with_url(Some(Url::from_str("ws://responsi.ve:80/3").unwrap()))
@@ -307,8 +346,17 @@ mod tests {
 
         let builder =
             Arc::new(default_test_builder().with_default_config().unwrap());
-        let peer_store =
-            builder.peer_store.create(builder.clone()).await.unwrap();
+        let blocks = builder
+            .blocks
+            .create(builder.clone(), TEST_SPACE_ID)
+            .await
+            .unwrap();
+
+        let peer_store = builder
+            .peer_store
+            .create(builder.clone(), TEST_SPACE_ID, blocks)
+            .await
+            .unwrap();
         let local_agent_store = builder
             .local_agent_store
             .create(builder.clone())
@@ -346,9 +394,9 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(all_responsive_remote_agents.len(), 2);
+        assert_eq!(all_responsive_remote_agents.len(), 1);
         assert!(all_responsive_remote_agents.contains(&remote_agent_1));
-        assert!(all_responsive_remote_agents.contains(&remote_agent_2));
+        assert!(!all_responsive_remote_agents.contains(&remote_agent_2));
         assert!(!all_responsive_remote_agents
             .contains(&remote_agent_for_local_agent));
         assert!(!all_responsive_remote_agents.contains(&unresponsive_agent));
@@ -377,8 +425,17 @@ mod tests {
 
         let builder =
             Arc::new(default_test_builder().with_default_config().unwrap());
-        let peer_store =
-            builder.peer_store.create(builder.clone()).await.unwrap();
+        let blocks = builder
+            .blocks
+            .create(builder.clone(), TEST_SPACE_ID)
+            .await
+            .unwrap();
+
+        let peer_store = builder
+            .peer_store
+            .create(builder.clone(), TEST_SPACE_ID, blocks)
+            .await
+            .unwrap();
         let local_agent_store = builder
             .local_agent_store
             .create(builder.clone())
@@ -440,7 +497,6 @@ mod tests {
             .build(TestLocalAgent::default());
         let remote_agent_2 = AgentBuilder::default()
             .with_storage_arc(DhtArc::Empty)
-            .with_url(Some(Url::from_str("ws://responsi.ve:80/2").unwrap()))
             .build(TestLocalAgent::default());
         let local_agent: DynLocalAgent = Arc::new(TestLocalAgent::default());
         let remote_agent_for_local_agent = AgentBuilder::default()
@@ -453,8 +509,17 @@ mod tests {
 
         let builder =
             Arc::new(default_test_builder().with_default_config().unwrap());
-        let peer_store =
-            builder.peer_store.create(builder.clone()).await.unwrap();
+        let blocks = builder
+            .blocks
+            .create(builder.clone(), TEST_SPACE_ID)
+            .await
+            .unwrap();
+
+        let peer_store = builder
+            .peer_store
+            .create(builder.clone(), TEST_SPACE_ID, blocks)
+            .await
+            .unwrap();
         let local_agent_store = builder
             .local_agent_store
             .create(builder.clone())
@@ -502,5 +567,69 @@ mod tests {
         assert!(!responsive_remote_near_location
             .contains(&remote_agent_for_local_agent));
         assert!(!responsive_remote_near_location.contains(&unresponsive_agent));
+    }
+
+    #[tokio::test]
+    async fn block_and_remove_agent_removes_them_from_peer_store() {
+        let builder =
+            Arc::new(default_test_builder().with_default_config().unwrap());
+
+        let blocks = builder
+            .blocks
+            .create(builder.clone(), TEST_SPACE_ID)
+            .await
+            .unwrap();
+
+        let peer_store = builder
+            .peer_store
+            .create(builder.clone(), TEST_SPACE_ID, blocks.clone())
+            .await
+            .unwrap();
+
+        let agent = AgentBuilder::default().build(TestLocalAgent::default());
+        let agent_id = agent.agent.clone();
+        peer_store.insert(vec![agent]).await.unwrap();
+        assert_eq!(peer_store.get_all().await.unwrap().len(), 1);
+
+        block_and_remove_agent(&peer_store, &blocks, agent_id)
+            .await
+            .unwrap();
+
+        assert!(peer_store.get_all().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn block_and_remove_agent_blocks_agent() {
+        let builder =
+            Arc::new(default_test_builder().with_default_config().unwrap());
+
+        let blocks = builder
+            .blocks
+            .create(builder.clone(), TEST_SPACE_ID)
+            .await
+            .unwrap();
+
+        let peer_store = builder
+            .peer_store
+            .create(builder.clone(), TEST_SPACE_ID, blocks.clone())
+            .await
+            .unwrap();
+
+        let agent = AgentBuilder::default().build(TestLocalAgent::default());
+        let agent_id = agent.agent.clone();
+
+        assert!(!blocks
+            .is_blocked(BlockTarget::Agent(agent_id.clone()))
+            .await
+            .unwrap());
+
+        block_and_remove_agent(&peer_store, &blocks, agent_id.clone())
+            .await
+            .unwrap();
+
+        assert!(blocks
+            .is_blocked(BlockTarget::Agent(agent_id))
+            .await
+            .unwrap());
     }
 }

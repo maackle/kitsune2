@@ -78,11 +78,6 @@ impl BootstrapSrv {
         // get the address that was assigned
         let addrs = server.server_addrs().to_vec();
         tracing::info!(?addrs, "Listening");
-        for addr in addrs.iter() {
-            // print these incase someone wants to parse for them
-            println!("#kitsune2_bootstrap_srv#listening#{addr:?}#");
-        }
-        println!("#kitsune2_bootstrap_srv#running#");
 
         // spawn our worker threads
         let mut workers = Vec::with_capacity(config.worker_thread_count + 1);
@@ -138,6 +133,15 @@ impl BootstrapSrv {
     /// Get the bound listening addresses of this server.
     pub fn listen_addrs(&self) -> &[std::net::SocketAddr] {
         self.addrs.as_slice()
+    }
+
+    /// Print the address server started on
+    pub fn print_addrs(&self) {
+        println!("#kitsune2_bootstrap_srv#running#");
+        for addr in self.addrs.iter() {
+            // print these incase someone wants to parse for them
+            println!("#kitsune2_bootstrap_srv#listening#{addr:?}#");
+        }
     }
 }
 
@@ -232,9 +236,9 @@ impl Handler<'_> {
     /// Respond to a request for the agent infos within a space.
     fn handle_boot_get(
         &mut self,
-        space: bytes::Bytes,
+        space_id: bytes::Bytes,
     ) -> std::io::Result<(u16, Vec<u8>)> {
-        let res = self.space_map.read(&space)?;
+        let res = self.space_map.read(&space_id)?;
 
         Ok((200, res))
     }
@@ -242,7 +246,7 @@ impl Handler<'_> {
     /// Validate an incoming agent info and put it in the store if appropriate.
     fn handle_boot_put(
         &mut self,
-        space: bytes::Bytes,
+        space_id: bytes::Bytes,
         agent: bytes::Bytes,
         body: bytes::Bytes,
     ) -> std::io::Result<(u16, Vec<u8>)> {
@@ -258,7 +262,7 @@ impl Handler<'_> {
         }
 
         // validate space matches url path
-        if space != info.space {
+        if space_id != info.space {
             return Err(std::io::Error::other("InvalidSpace"));
         }
 
@@ -306,7 +310,7 @@ impl Handler<'_> {
 
         self.space_map.update(
             self.config.max_entries_per_space,
-            space,
+            space_id,
             Some((info, r)),
         );
 

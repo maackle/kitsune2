@@ -94,9 +94,11 @@ impl SbdWebsocket for WebsocketForSbd {
                         let msg = r.map_err(Error::other)?;
                         match msg {
                             Message::Text(s) => {
-                                return Ok(Payload::Vec(s.into_bytes()))
+                                return Ok(Payload::Vec(s.as_bytes().to_vec()))
                             }
-                            Message::Binary(v) => return Ok(Payload::Vec(v)),
+                            Message::Binary(v) => {
+                                return Ok(Payload::Vec(v.to_vec()))
+                            }
                             Message::Ping(_) | Message::Pong(_) => (),
                             Message::Close(_) => {
                                 return Err(Error::other("closed"))
@@ -112,11 +114,11 @@ impl SbdWebsocket for WebsocketForSbd {
         let this = self.clone();
         Box::pin(async move {
             let mut write = this.write.lock().await;
-            let v = match payload {
-                Payload::Vec(v) => v,
-                Payload::BytesMut(b) => b.to_vec(),
+            let b = match payload {
+                Payload::Vec(v) => bytes::Bytes::from(v),
+                Payload::BytesMut(b) => b.freeze(),
             };
-            write.send(Message::Binary(v)).await.map_err(Error::other)?;
+            write.send(Message::Binary(b)).await.map_err(Error::other)?;
             write.flush().await.map_err(Error::other)?;
             Ok(())
         })
@@ -154,6 +156,22 @@ pub async fn handle_sbd(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
+    let token: Option<Arc<str>> = headers
+        .get("Authorization")
+        .and_then(|t| t.to_str().ok().map(<Arc<str>>::from));
+
+    let maybe_auth = Some((token.clone(), state.token_tracker.clone()));
+
+    if !state
+        .token_tracker
+        .check_is_token_valid(&state.sbd_config, token)
+    {
+        return axum::response::IntoResponse::into_response((
+            axum::http::StatusCode::UNAUTHORIZED,
+            "Unauthorized",
+        ));
+    }
+
     let pk = match base64::prelude::BASE64_URL_SAFE_NO_PAD.decode(pub_key) {
         Ok(pk) if pk.len() == 32 => {
             let mut sized_pk = [0; 32];
@@ -183,7 +201,9 @@ pub async fn handle_sbd(
 
     // finalize the upgrade process by returning upgrade callback.
     // we can customize the callback by sending additional info such as address.
-    ws.on_upgrade(move |socket| handle_socket(state, socket, pk, calc_ip))
+    ws.on_upgrade(move |socket| {
+        handle_socket(state, socket, pk, calc_ip, maybe_auth)
+    })
 }
 
 async fn handle_socket(
@@ -191,6 +211,7 @@ async fn handle_socket(
     socket: WebSocket,
     pk: PubKey,
     calc_ip: Arc<Ipv6Addr>,
+    maybe_auth: Option<(Option<Arc<str>>, sbd_server::AuthTokenTracker)>,
 ) {
     let sbd_state = state.sbd_state.as_ref().expect("Missing sbd state");
 
@@ -201,6 +222,7 @@ async fn handle_socket(
         Arc::new(WebsocketForSbd::new(socket)),
         pk,
         calc_ip,
+        maybe_auth,
     )
     .await;
 }

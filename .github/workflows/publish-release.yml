@@ -3,7 +3,8 @@ name: Publish release
 on:
   push:
     branches:
-      - release-0.1
+      - main
+      - main-*
 
 jobs:
   call:

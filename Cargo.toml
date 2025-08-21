@@ -17,9 +17,10 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.15"
+version = "0.3.0-dev.1"
 authors = ["Holochain Core Dev Team <devcore@holochain.org>"]
-homepage = "https://github.com/holochain/kitsune2"
+homepage = "https://www.holochain.org/"
+repository = "https://github.com/holochain/kitsune2"
 keywords = ["holochain", "kitsune", "p2p", "dht", "networking"]
 categories = ["network-programming"]
 license = "Apache-2.0"
@@ -34,26 +35,26 @@ panic = "abort"
 [workspace.dependencies]
 # Self dependencies for workspace crates to depend on each other.
 # For example, most crates will depend on the api crate.
-kitsune2 = { version = "0.1.9", path = "crates/kitsune2", default-features = false }
-kitsune2_api = { version = "0.1.9", path = "crates/api" }
-kitsune2_dht = { version = "0.1.9", path = "crates/dht" }
-kitsune2_gossip = { version = "0.1.9", path = "crates/gossip" }
-kitsune2_transport_tx5 = { version = "0.1.9", path = "crates/transport_tx5", default-features = false }
-kitsune2_transport_iroh = { version = "0.1.9", path = "crates/transport_iroh" }
-kitsune2_bootstrap_client = { version = "0.1.9", path = "crates/bootstrap_client" }
+kitsune2 = { version = "0.3.0-dev.1", path = "crates/kitsune2", default-features = false }
+kitsune2_api = { version = "0.3.0-dev.1", path = "crates/api" }
+kitsune2_dht = { version = "0.3.0-dev.1", path = "crates/dht" }
+kitsune2_gossip = { version = "0.3.0-dev.1", path = "crates/gossip" }
+kitsune2_transport_iroh = { version = "0.3.0-dev.1", path = "crates/transport_iroh", default-features = false }
+kitsune2_transport_tx5 = { version = "0.3.0-dev.1", path = "crates/transport_tx5", default-features = false }
+kitsune2_bootstrap_client = { version = "0.3.0-dev.1", path = "crates/bootstrap_client" }
 
 # used by bootstrap_srv for mpmc worker queue pattern.
 async-channel = "2.3.1"
 # this is used by bootstrap_srv as the http server implementation.
-axum = { version = "0.7", default-features = false }
-# used by fetch module to back off requests to unresponsive agents
-backon = { version = "1.3", default-features = false }
+axum = { version = "0.8", default-features = false }
 # debugging is far easier when you can see short byte arrays
 # as base64 instead of decimal u8s.
 base64 = "0.22.1"
 # shallow-clone byte arrays is a solved problem.
 # bytes is the crate that solves it.
 bytes = { version = "1.8.0", features = ["serde"] }
+# Used to pretty-print the timestamps in the showcase app
+chrono = "0.4.41"
 # bootstrap_srv for cli param parsing
 clap = "4.5.21"
 # bootstrap_srv uses this to make a best-effort to clean up tempfiles
@@ -66,14 +67,14 @@ mockall = "0.13"
 # bootstrap_srv uses this to determine worker thread count.
 num_cpus = "1.16.0"
 # api uses this for the kitsune2 wire protocol.
-prost = "0.13.3"
+prost = "0.14"
 # used to generate private cryptography keys.
 rand = "0.8.5"
 # kitsune types need to be serializable for network transmission.
 serde = { version = "1.0", features = ["derive"] }
 # kitsune2 agent info is serialized as json to improve debugability of
 # bootstrapping. So, we need a json library.
-serde_json = "1.0.132"
+serde_json = "1.0"
 # tokio is used for synchronization primitives as well as internal
 # task spawning. We could consider abstracting the async runtime
 # at some point in the future.
@@ -85,46 +86,63 @@ tempfile = "3.14.0"
 # kitsune2 internally uses a mix of std::io::Error and thiserror derivation.
 thiserror = "2.0.3"
 # ureq is used in the bootstrap client module.
-ureq = "2.10.1"
+ureq = "3.0"
 # url validation used by the api crate.
 url = "2.5.4"
 # kitsune2 uses tracing to log events. A consumer can choose any subscriber
 # to receive these logs.
 tracing = "0.1"
+# Used in the showcase app to log events to a file
+tracing-appender = "0.2.3"
+# Used in testing and the showcase app to output tracing
+tracing-subscriber = "0.3"
 # for init config
-tx5-core = "0.3.11"
+tx5-core = "0.7.1"
 # for the transport_tx5 crate
-tx5 = { version = "0.3.11", default-features = false }
+tx5 = { version = "0.7.1", default-features = false }
 # TLS support for the bootstrap server
 axum-server = { version = "0.7.1", default-features = false }
 # TLS support for the bootstrap server
 rustls = { version = "0.23", default-features = false }
 # embedded in the bootstrap server and to test the tx5 integration
-sbd-server = { version = "0.1.0" }
+sbd-server = { version = "0.3.2" }
 # axum-server integration with the SBD server
 tokio-rustls = "0.26"
+# for generating JSON schemas to help with checking configuration
+schemars = { version = "0.9", features = ["preserve_order"] }
+# Used in the showcase CLI
+rustyline = { version = "16.0" }
+# Used in showcase app for the commands
+strum = { version = "0.27.1", features = ["derive", "strum_macros"] }
 # --- tool-dependencies ---
 # The following workspace dependencies are thus-far only used in unpublished
 # tools and so are not needed in any true dependency trees.
 # Please be careful to only include them in build dependencies or move them
 # above this section.
 # --- tool-dependencies ---
-prost-build = "0.13.3"
+prost-build = "0.14"
 # --- dev-dependencies ---
 # The following workspace dependencies are used in crate dev-dependencies.
 # Please be careful to only include them in dev dependencies or move them
 # above this section.
 # --- dev-dependencies ---
-kitsune2_bootstrap_srv = { version = "0.1.9", path = "crates/bootstrap_srv" }
-kitsune2_core = { version = "0.1.9", path = "crates/core" }
-kitsune2_test_utils = { version = "0.1.9", path = "crates/test_utils" }
+kitsune2_bootstrap_srv = { version = "0.3.0-dev.1", path = "crates/bootstrap_srv" }
+kitsune2_core = { version = "0.3.0-dev.1", path = "crates/core" }
+kitsune2_test_utils = { version = "0.3.0-dev.1", path = "crates/test_utils" }
 
 # used to test the bootstrap server with SBD enabled
-sbd-client = "0.1.0"
+sbd-client = "0.3.2"
 
 # used to hash op data
 sha2 = "0.10.8"
-# used in testing to output tracing
-tracing-subscriber = "0.3"
 # Generating test certificates in the bootstrap_srv
 rcgen = "0.13"
+# Used in the schema example
+jsonschema = "0.30.0"
+
+[patch.crates-io]
+#sbd-server = { path = "../sbd/rust/sbd-server" }
+#sbd-client = { path = "../sbd/rust/sbd-client" }
+#sbd-e2e-crypto-client = { path = "../sbd/rust/sbd-e2e-crypto-client" }
+#tx5-core = { path = "../tx5/crates/tx5-core" }
+#tx5 = { path = "../tx5/crates/tx5" }

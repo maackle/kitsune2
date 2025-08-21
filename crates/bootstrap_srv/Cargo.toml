@@ -4,6 +4,7 @@ version.workspace = true
 description = "p2p / dht communication WAN discovery bootstrapping server"
 license.workspace = true
 homepage.workspace = true
+repository.workspace = true
 documentation = "https://docs.rs/kitsune2_bootstrap_srv"
 authors.workspace = true
 keywords.workspace = true
@@ -14,6 +15,7 @@ edition.workspace = true
 async-channel = { workspace = true }
 axum = { workspace = true, default-features = false, features = [
   "http1",
+  "json",
   "tokio",
   "ws",
 ] }
@@ -39,12 +41,11 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
 
 sbd-server = { workspace = true, features = ["tungstenite"] }
-tokio-rustls = { workspace = true }
 
 [dev-dependencies]
-ureq = { workspace = true, features = ["tls"] }
+ureq = { workspace = true }
+rand = { workspace = true }
 rcgen = { workspace = true }
-
 sbd-client = { workspace = true }
 
 [features]

@@ -1,7 +1,7 @@
-use back_off::BackOffList;
 use kitsune2_api::*;
 use message_handler::FetchMessageHandler;
 use std::collections::HashMap;
+use std::sync::MutexGuard;
 use std::{
     collections::HashSet,
     sync::{Arc, Mutex},
@@ -12,7 +12,6 @@ use tokio::{
     task::JoinHandle,
 };
 
-mod back_off;
 mod message_handler;
 
 #[cfg(test)]
@@ -25,19 +24,19 @@ pub const MOD_NAME: &str = "Fetch";
 mod config {
     /// Configuration parameters for [CoreFetchFactory](super::CoreFetchFactory).
     #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(rename_all = "camelCase")]
     pub struct CoreFetchConfig {
-        /// How many parallel op fetch requests can be made at once. Default: 2.
+        /// How many parallel op fetch requests can be made at once.
+        ///
+        /// Default: 2.
+        #[cfg_attr(feature = "schema", schemars(default))]
         pub parallel_request_count: u8,
         /// Delay before re-inserting ops to request back into the outgoing request queue.
-        /// Default: 2 s.
+        ///
+        /// Default: 30 s.
+        #[cfg_attr(feature = "schema", schemars(default))]
         pub re_insert_outgoing_request_delay_ms: u32,
-        /// Duration of first interval to back off an unresponsive peer. Default: 20 s.
-        pub first_back_off_interval_ms: u32,
-        /// Duration of last interval to back off an unresponsive peer. Default: 10 min.
-        pub last_back_off_interval_ms: u32,
-        /// Number of back off intervals. Default: 4.
-        pub num_back_off_intervals: usize,
     }
 
     impl Default for CoreFetchConfig {
@@ -45,16 +44,14 @@ mod config {
         fn default() -> Self {
             Self {
                 parallel_request_count: 2,
-                re_insert_outgoing_request_delay_ms: 2000,
-                first_back_off_interval_ms: 1000 * 20,
-                last_back_off_interval_ms: 1000 * 60 * 10,
-                num_back_off_intervals: 4,
+                re_insert_outgoing_request_delay_ms: 30000,
             }
         }
     }
 
     /// Module-level configuration for CoreFetch.
     #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(rename_all = "camelCase")]
     pub struct CoreFetchModConfig {
         /// CoreFetch configuration.
@@ -90,6 +87,7 @@ impl FetchFactory for CoreFetchFactory {
         builder: Arc<Builder>,
         space_id: SpaceId,
         op_store: DynOpStore,
+        peer_meta_store: DynPeerMetaStore,
         transport: DynTransport,
     ) -> BoxFut<'static, K2Result<DynFetch>> {
         Box::pin(async move {
@@ -99,6 +97,7 @@ impl FetchFactory for CoreFetchFactory {
                 config.core_fetch,
                 space_id,
                 op_store,
+                peer_meta_store,
                 transport,
             ));
             Ok(out)
@@ -113,7 +112,6 @@ type IncomingResponse = Vec<Op>;
 #[derive(Debug)]
 struct State {
     requests: HashSet<OutgoingRequest>,
-    back_off_list: BackOffList,
     notify_when_drained_senders: Vec<futures::channel::oneshot::Sender<()>>,
 }
 
@@ -129,14 +127,6 @@ impl State {
                     acc
                 },
             ),
-            peers_on_backoff: self
-                .back_off_list
-                .state
-                .iter()
-                .map(|(peer_url, backoff)| {
-                    (peer_url.clone(), backoff.current_backoff_expiry())
-                })
-                .collect(),
         }
     }
 }
@@ -156,9 +146,16 @@ impl CoreFetch {
         config: CoreFetchConfig,
         space_id: SpaceId,
         op_store: DynOpStore,
+        peer_meta_store: DynPeerMetaStore,
         transport: DynTransport,
     ) -> Self {
-        Self::spawn_tasks(config, space_id, op_store, transport)
+        Self::spawn_tasks(
+            config,
+            space_id,
+            op_store,
+            peer_meta_store,
+            transport,
+        )
     }
 }
 
@@ -219,6 +216,7 @@ impl CoreFetch {
         config: CoreFetchConfig,
         space_id: SpaceId,
         op_store: DynOpStore,
+        peer_meta_store: DynPeerMetaStore,
         transport: DynTransport,
     ) -> Self {
         // Create a queue to process outgoing op requests. Requests are sent to peers.
@@ -239,11 +237,6 @@ impl CoreFetch {
 
         let state = Arc::new(Mutex::new(State {
             requests: HashSet::new(),
-            back_off_list: BackOffList::new(
-                config.first_back_off_interval_ms,
-                config.last_back_off_interval_ms,
-                config.num_back_off_intervals,
-            ),
             notify_when_drained_senders: vec![],
         }));
 
@@ -257,6 +250,7 @@ impl CoreFetch {
                     outgoing_request_tx.clone(),
                     outgoing_request_rx.clone(),
                     space_id.clone(),
+                    peer_meta_store.clone(),
                     Arc::downgrade(&transport),
                     config.re_insert_outgoing_request_delay_ms,
                 ));
@@ -308,12 +302,14 @@ impl CoreFetch {
         outgoing_request_tx: Sender<OutgoingRequest>,
         outgoing_request_rx: Arc<tokio::sync::Mutex<Receiver<OutgoingRequest>>>,
         space_id: SpaceId,
+        peer_meta_store: DynPeerMetaStore,
         transport: WeakDynTransport,
         re_insert_outgoing_request_delay: u32,
     ) {
         while let Some((op_id, peer_url)) =
             outgoing_request_rx.lock().await.recv().await
         {
+            tracing::debug!(?op_id, ?peer_url, "processing outgoing request");
             let Some(transport) = transport.upgrade() else {
                 tracing::info!(
                     "Transport dropped, stopping outgoing request task"
@@ -321,67 +317,68 @@ impl CoreFetch {
                 break;
             };
 
-            let is_peer_on_back_off = {
-                let mut lock = state.lock().unwrap();
+            // If peer URL is set as unresponsive, remove current request from state.
+            let peer_url_unresponsive = match peer_meta_store
+                .get_unresponsive(peer_url.clone())
+                .await
+            {
+                Ok(maybe_value) => maybe_value.is_some(),
+                Err(err) => {
+                    tracing::warn!(?err, "could not query peer meta store");
+                    false
+                }
+            };
+            if peer_url_unresponsive {
+                state
+                    .lock()
+                    .expect("poisoned")
+                    .requests
+                    .remove(&(op_id.clone(), peer_url.clone()));
+            }
 
-                // Do nothing if op id is no longer in the set of requests to send.
-                //
-                // Note that because this request isn't in the state, it is safe to
-                // skip the requests empty check below.
+            // Do nothing if op id is no longer in the set of requests to send.
+            //
+            // If the peer URL is unresponsive, the current request will have been removed
+            // from state and no request will be sent and the request
+            // will not be re-inserted into the queue.
+            {
+                let lock = state.lock().expect("poisoned");
                 if !lock.requests.contains(&(op_id.clone(), peer_url.clone())) {
+                    // Check if the fetch queue is drained and notify listeners.
+                    Self::notify_listeners_if_queue_drained(lock);
+
                     continue;
                 }
+            }
 
-                lock.back_off_list.is_peer_on_back_off(&peer_url)
-            };
+            tracing::debug!(
+                ?peer_url,
+                ?space_id,
+                ?op_id,
+                "sending fetch request"
+            );
 
-            // Send request if peer is not on back off list.
-            if !is_peer_on_back_off {
-                tracing::debug!(
-                    ?peer_url,
-                    ?space_id,
+            // Send fetch request to peer.
+            let data = serialize_request_message(vec![op_id.clone()]);
+            if let Err(err) = transport
+                .send_module(
+                    peer_url.clone(),
+                    space_id.clone(),
+                    MOD_NAME.to_string(),
+                    data,
+                )
+                .await
+            {
+                tracing::warn!(
                     ?op_id,
-                    "sending fetch request"
+                    ?peer_url,
+                    "could not send fetch request: {err}."
                 );
-
-                // Send fetch request to peer.
-                let data = serialize_request_message(vec![op_id.clone()]);
-                match transport
-                    .send_module(
-                        peer_url.clone(),
-                        space_id.clone(),
-                        MOD_NAME.to_string(),
-                        data,
-                    )
-                    .await
-                {
-                    Ok(()) => {
-                        // If peer was on back off list, remove them.
-                        state
-                            .lock()
-                            .unwrap()
-                            .back_off_list
-                            .remove_peer(&peer_url);
-                    }
-                    Err(err) => {
-                        tracing::warn!(
-                            ?op_id,
-                            ?peer_url,
-                            "could not send fetch request: {err}. Putting peer on back off list."
-                        );
-                        let mut lock = state.lock().unwrap();
-                        lock.back_off_list.back_off_peer(&peer_url);
-
-                        // If max back off interval has expired for the peer,
-                        // give up on requesting ops from them.
-                        if lock
-                            .back_off_list
-                            .has_last_back_off_expired(&peer_url)
-                        {
-                            lock.requests.retain(|(_, a)| *a != peer_url);
-                        }
-                    }
-                }
+                state
+                    .lock()
+                    .expect("poisoned")
+                    .requests
+                    .retain(|(_, a)| *a != peer_url);
             }
 
             // After processing this request, check if the fetch queue is drained.
@@ -412,21 +409,40 @@ impl CoreFetch {
                         re_insert_outgoing_request_delay as u64,
                     ))
                     .await;
-                    if let Err(err) = outgoing_request_tx
-                        .try_send((op_id.clone(), peer_url.clone()))
+                    let mut lock = state.lock().expect("poisoned");
+                    // Only re-insert the request if it is still in the state, meaning that it
+                    // has not been removed from state because the requested op has come in or
+                    // the peer URL has been set as unresponsive.
+                    if lock
+                        .requests
+                        .contains(&(op_id.clone(), peer_url.clone()))
                     {
-                        tracing::warn!(
-                        "could not re-insert fetch request for op {op_id} to peer {peer_url} into queue: {err}"
-                    );
-                        // Remove op id/peer url from set to prevent build-up of state.
-                        state
-                            .lock()
-                            .unwrap()
-                            .requests
-                            .remove(&(op_id, peer_url));
+                        if let Err(err) = outgoing_request_tx
+                            .try_send((op_id.clone(), peer_url.clone()))
+                        {
+                            tracing::warn!(
+                                "could not re-insert fetch request for op {op_id} to peer {peer_url} into queue: {err}"
+                            );
+                            // Remove request from set to prevent build-up of state.
+                            lock.requests.remove(&(op_id, peer_url));
+
+                            Self::notify_listeners_if_queue_drained(lock);
+                        }
                     }
                 }
             });
+        }
+    }
+
+    fn notify_listeners_if_queue_drained(mut state: MutexGuard<State>) {
+        // Check if the fetch queue is drained.
+        if state.requests.is_empty() {
+            // Notify all listeners that the fetch queue is drained.
+            for notify in state.notify_when_drained_senders.drain(..) {
+                if notify.send(()).is_err() {
+                    tracing::warn!("Failed to send notification on drained");
+                }
+            }
         }
     }
 

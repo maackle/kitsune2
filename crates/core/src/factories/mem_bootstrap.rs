@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 mod config {
     /// Configuration parameters for [MemBootstrapFactory](super::MemBootstrapFactory).
     #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(rename_all = "camelCase")]
     pub struct MemBootstrapConfig {
         /// Since rust test runs multiple tests in the same process,
@@ -18,7 +19,9 @@ mod config {
         pub test_id: String,
 
         /// How often in ms to update the peer store with bootstrap infos.
-        /// Defaults to 5s.
+        ///
+        /// Default: 5s.
+        #[cfg_attr(feature = "schema", schemars(default))]
         pub poll_freq_ms: u32,
     }
 
@@ -33,6 +36,7 @@ mod config {
 
     /// Module-level configuration for MemBootstrap.
     #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(rename_all = "camelCase")]
     pub struct MemBootstrapModConfig {
         /// MemBootstrap configuration.
@@ -73,13 +77,16 @@ impl BootstrapFactory for MemBootstrapFactory {
         &self,
         builder: Arc<Builder>,
         peer_store: DynPeerStore,
-        _space: SpaceId,
+        space_id: SpaceId,
     ) -> BoxFut<'static, K2Result<DynBootstrap>> {
         Box::pin(async move {
             let config: MemBootstrapModConfig =
                 builder.config.get_module_config()?;
-            let out: DynBootstrap =
-                Arc::new(MemBootstrap::new(config.mem_bootstrap, peer_store));
+            let out: DynBootstrap = Arc::new(MemBootstrap::new(
+                space_id,
+                config.mem_bootstrap,
+                peer_store,
+            ));
             Ok(out)
         })
     }
@@ -87,7 +94,8 @@ impl BootstrapFactory for MemBootstrapFactory {
 
 #[derive(Debug)]
 struct MemBootstrap {
-    test_id: Arc<str>,
+    space_id: SpaceId,
+    test_id: TestId,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -98,14 +106,20 @@ impl Drop for MemBootstrap {
 }
 
 impl MemBootstrap {
-    pub fn new(config: MemBootstrapConfig, peer_store: DynPeerStore) -> Self {
-        let test_id: Arc<str> = config.test_id.into_boxed_str().into();
+    pub fn new(
+        space_id: SpaceId,
+        config: MemBootstrapConfig,
+        peer_store: DynPeerStore,
+    ) -> Self {
+        let test_id: TestId = config.test_id.into_boxed_str().into();
         let test_id2 = test_id.clone();
         let poll_freq =
             std::time::Duration::from_millis(config.poll_freq_ms as u64);
+        let space_id_2 = space_id.clone();
         let task = tokio::task::spawn(async move {
             loop {
-                let info_list = stat_process(test_id2.clone(), None);
+                let info_list =
+                    stat_process(test_id2.clone(), &space_id_2, None);
                 peer_store.insert(info_list).await.unwrap();
                 tokio::select! {
                     _ = tokio::time::sleep(poll_freq) => (),
@@ -113,27 +127,35 @@ impl MemBootstrap {
                 }
             }
         });
-        Self { test_id, task }
+        Self {
+            space_id,
+            test_id,
+            task,
+        }
     }
 }
 
 impl Bootstrap for MemBootstrap {
     fn put(&self, info: Arc<AgentInfoSigned>) {
-        let _ = stat_process(self.test_id.clone(), Some(info));
+        let _ = stat_process(self.test_id.clone(), &self.space_id, Some(info));
     }
 }
 
 static NOTIFY: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
+type TestId = Arc<str>;
 type Store = Vec<Arc<AgentInfoSigned>>;
-type Map = std::collections::HashMap<Arc<str>, Store>;
-static STAT: std::sync::OnceLock<Mutex<Map>> = std::sync::OnceLock::new();
+type SpaceMap = std::collections::HashMap<SpaceId, Store>;
+type TestMap = std::collections::HashMap<TestId, SpaceMap>;
+static STAT: std::sync::OnceLock<Mutex<TestMap>> = std::sync::OnceLock::new();
 fn stat_process(
-    id: Arc<str>,
+    test_id: TestId,
+    space_id: &SpaceId,
     info: Option<Arc<AgentInfoSigned>>,
 ) -> Vec<Arc<AgentInfoSigned>> {
     let mut lock = STAT.get_or_init(Default::default).lock().unwrap();
-    let store = lock.entry(id).or_default();
+    let map = lock.entry(test_id).or_default();
+    let store = map.entry(space_id.clone()).or_default();
     let now = Timestamp::now();
     store.retain(|a| {
         if let Some(info) = info.as_ref() {

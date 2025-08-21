@@ -42,10 +42,11 @@ impl OpStoreFactory for MemOpStoreFactory {
     fn create(
         &self,
         _builder: Arc<Builder>,
-        space: SpaceId,
+        space_id: SpaceId,
     ) -> BoxFut<'static, K2Result<DynOpStore>> {
         Box::pin(async move {
-            let out: DynOpStore = Arc::new(Kitsune2MemoryOpStore::new(space));
+            let out: DynOpStore =
+                Arc::new(Kitsune2MemoryOpStore::new(space_id));
             Ok(out)
         })
     }
@@ -102,7 +103,7 @@ impl From<MemoryOp> for Bytes {
 ///
 /// Test data should create [MemoryOp]s and not be aware of this type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct MemoryOpRecord {
+pub struct MemoryOpRecord {
     /// The id (hash) of the op
     pub op_id: OpId,
     /// The creation timestamp of this op
@@ -145,15 +146,15 @@ impl From<Op> for MemoryOp {
 /// Intended for testing only, because it provides no persistence of op data.
 #[derive(Debug)]
 struct Kitsune2MemoryOpStore {
-    _space: SpaceId,
+    _space_id: SpaceId,
     inner: RwLock<Kitsune2MemoryOpStoreInner>,
 }
 
 impl Kitsune2MemoryOpStore {
     /// Create a new [Kitsune2MemoryOpStore].
-    pub fn new(space: SpaceId) -> Self {
+    pub fn new(space_id: SpaceId) -> Self {
         Self {
-            _space: space,
+            _space_id: space_id,
             inner: Default::default(),
         }
     }
