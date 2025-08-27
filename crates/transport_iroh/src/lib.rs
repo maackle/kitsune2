@@ -173,7 +173,8 @@ impl IrohTransport {
     }
 }
 
-fn peer_url_to_node_addr(peer_url: Url) -> Result<NodeAddr, K2Error> {
+/// Convert a kitsune2 peer Url to an iroh NodeAddr.
+pub fn peer_url_to_node_addr(peer_url: Url) -> Result<NodeAddr, K2Error> {
     let url = url::Url::parse(peer_url.as_str()).map_err(|err| {
         K2Error::other(format!("Failed to parse peer url: {err:?}"))
     })?;
