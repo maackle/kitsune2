@@ -43,12 +43,15 @@ pub mod config {
 pub use config::*;
 /// Provides a Kitsune2 transport module based on the iroh crate.
 #[derive(Debug)]
-pub struct IrohTransportFactory {}
+pub struct IrohTransportFactory {
+    endpoint: Option<iroh::Endpoint>,
+}
 
 impl IrohTransportFactory {
     /// Construct a new IrohTransportFactory.
-    pub fn create() -> DynTransportFactory {
-        let out: DynTransportFactory = Arc::new(IrohTransportFactory {});
+    pub fn create(endpoint: Option<iroh::Endpoint>) -> DynTransportFactory {
+        let out: DynTransportFactory =
+            Arc::new(IrohTransportFactory { endpoint });
         out
     }
 }
@@ -76,20 +79,25 @@ impl TransportFactory for IrohTransportFactory {
         builder: Arc<Builder>,
         handler: DynTxHandler,
     ) -> BoxFut<'static, K2Result<DynTransport>> {
+        let endpoint = self.endpoint.clone();
         Box::pin(async move {
             let config: IrohTransportModConfig =
                 builder.config.get_module_config()?;
 
             let handler = TxImpHnd::new(handler);
-            let imp =
-                IrohTransport::create(config.iroh_transport, handler.clone())
-                    .await?;
+            let imp = IrohTransport::create(
+                config.iroh_transport,
+                handler.clone(),
+                endpoint,
+            )
+            .await?;
             Ok(DefaultTransport::create(&handler, imp))
         })
     }
 }
 
-const ALPN: &[u8] = b"kitsune2";
+/// The iroh ALPN for kitsune2 iroh transport.
+pub const ALPN: &[u8] = b"kitsune2";
 
 #[derive(Debug)]
 struct IrohTransport {
@@ -111,6 +119,7 @@ impl IrohTransport {
     pub async fn create(
         config: IrohTransportConfig,
         handler: Arc<TxImpHnd>,
+        endpoint: Option<iroh::Endpoint>,
     ) -> K2Result<DynTxImp> {
         let relay_mode = match config.custom_relay_url {
             Some(relay_url_str) => {
@@ -122,12 +131,27 @@ impl IrohTransport {
             }
             None => RelayMode::Default,
         };
-        let endpoint = iroh::Endpoint::builder()
-            .relay_mode(relay_mode)
-            .alpns(vec![ALPN.to_vec()])
-            .bind()
-            .await
-            .map_err(|err| K2Error::other("bad"))?;
+        let endpoint = if let Some(endpoint) = endpoint {
+            endpoint
+        } else {
+            iroh::Endpoint::builder()
+                .relay_mode(relay_mode)
+                .alpns(vec![ALPN.to_vec()])
+                .bind()
+                .await
+                .map_err(|err| K2Error::other("bad"))?
+        };
+
+        println!(
+            "MY ENDPOINT node_id: {:?} {}",
+            endpoint.node_id(),
+            base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(endpoint.node_id())
+        );
+        tracing::info!(
+            "MY ENDPOINT node_id: {:?} {}",
+            endpoint.node_id(),
+            base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(endpoint.node_id())
+        );
 
         let _relay_url = endpoint.home_relay().initialized().await.unwrap();
         let endpoint = Arc::new(endpoint);
@@ -175,6 +199,7 @@ impl IrohTransport {
 
 /// Convert a kitsune2 peer Url to an iroh NodeAddr.
 pub fn peer_url_to_node_addr(peer_url: Url) -> Result<NodeAddr, K2Error> {
+    // println!("peer_url_to_node_addr: peer_url: {:?}", peer_url);
     let url = url::Url::parse(peer_url.as_str()).map_err(|err| {
         K2Error::other(format!("Failed to parse peer url: {err:?}"))
     })?;
@@ -183,20 +208,26 @@ pub fn peer_url_to_node_addr(peer_url: Url) -> Result<NodeAddr, K2Error> {
     };
     let decoded_peer_id = base64::prelude::BASE64_URL_SAFE_NO_PAD
         .decode(peer_id)
-        .map_err(|err| K2Error::other("failed to decode peer id"))?;
+        .map_err(|err| {
+            K2Error::other(format!("failed to decode peer id: {err}"))
+        })?;
     let node_id = NodeId::try_from(decoded_peer_id.as_slice())
         .map_err(|err| K2Error::other(format!("bad peer id: {err}")))?;
 
     let relay_url = url::Url::parse(
         format!("{}://{}", url.scheme(), peer_url.addr()).as_str(),
     )
-    .map_err(|err| K2Error::other("Bad addr"))?;
+    .map_err(|err| K2Error::other(format!("Bad addr: {err}")))?;
 
-    Ok(NodeAddr {
+    let r = NodeAddr {
         node_id,
         relay_url: Some(RelayUrl::from(relay_url)),
         direct_addresses: BTreeSet::new(),
-    })
+    };
+
+    // println!("peer_url_to_node_addr: r: {:?}", r);
+
+    Ok(r)
 }
 
 fn to_peer_url(url: url::Url, node_id: NodeId) -> Result<Url, K2Error> {
@@ -215,7 +246,8 @@ fn to_peer_url(url: url::Url, node_id: NodeId) -> Result<Url, K2Error> {
 }
 
 fn node_addr_to_peer_url(node_addr: NodeAddr) -> Result<Url, K2Error> {
-    match node_addr.relay_url {
+    // println!("node_addr_to_peer_url: node_addr: {:?}", node_addr);
+    let r = match node_addr.relay_url {
         Some(relay_url) => to_peer_url(relay_url.into(), node_addr.node_id),
         None => {
             let Some(direct_address) = node_addr
@@ -236,7 +268,10 @@ fn node_addr_to_peer_url(node_addr: NodeAddr) -> Result<Url, K2Error> {
             };
             to_peer_url(url, node_addr.node_id)
         }
-    }
+    };
+
+    // println!("node_addr_to_peer_url: r: {:?}", r);
+    r
 }
 
 impl TxImp for IrohTransport {

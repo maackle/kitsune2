@@ -48,7 +48,7 @@ pub fn default_builder() -> Builder {
         peer_store: factories::MemPeerStoreFactory::create(),
         bootstrap: factories::CoreBootstrapFactory::create(),
         fetch: factories::CoreFetchFactory::create(),
-        transport: IrohTransportFactory::create(),
+        transport: IrohTransportFactory::create(None),
         op_store: MemOpStoreFactory::create(),
         peer_meta_store: factories::MemPeerMetaStoreFactory::create(),
         gossip: K2GossipFactory::create(),

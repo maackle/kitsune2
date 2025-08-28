@@ -2088,6 +2088,7 @@ dependencies = [
  "base64",
  "bytes",
  "futures",
+ "iroh",
  "kitsune2_api",
  "mockall",
  "prost",
