@@ -10,9 +10,12 @@ use kitsune2_api::*;
 use std::{
     collections::{BTreeMap, BTreeSet},
     net::SocketAddr,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc::Receiver, Mutex};
 
 #[allow(missing_docs)]
 pub mod config {
@@ -40,18 +43,46 @@ pub mod config {
     }
 }
 
+/// Specifies how to integrate with external iroh protocols using this endpoint.
+pub struct IrohIntegration {
+    /// The shared iroh endpoint
+    pub endpoint: iroh::Endpoint,
+    /// The receiver for incoming connections from the "mother" protocol.
+    pub receiver: Receiver<iroh::endpoint::Incoming>,
+}
+
+enum IrohListener {
+    Endpoint(Endpoint),
+    Receiver(Receiver<iroh::endpoint::Incoming>),
+}
+
+#[derive(Clone, Debug)]
+struct IrohSender(Endpoint);
+
 pub use config::*;
 /// Provides a Kitsune2 transport module based on the iroh crate.
-#[derive(Debug)]
 pub struct IrohTransportFactory {
-    endpoint: Option<iroh::Endpoint>,
+    integration: std::sync::Mutex<Option<IrohIntegration>>,
+    initialized: AtomicBool,
+}
+
+impl std::fmt::Debug for IrohTransportFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "IrohTransportFactory {{ initialized: {:?} }}",
+            self.initialized.load(Ordering::Relaxed)
+        )
+    }
 }
 
 impl IrohTransportFactory {
     /// Construct a new IrohTransportFactory.
-    pub fn create(endpoint: Option<iroh::Endpoint>) -> DynTransportFactory {
-        let out: DynTransportFactory =
-            Arc::new(IrohTransportFactory { endpoint });
+    pub fn create(integration: Option<IrohIntegration>) -> DynTransportFactory {
+        let out: DynTransportFactory = Arc::new(IrohTransportFactory {
+            integration: std::sync::Mutex::new(None),
+            initialized: AtomicBool::new(false),
+        });
         out
     }
 }
@@ -79,7 +110,19 @@ impl TransportFactory for IrohTransportFactory {
         builder: Arc<Builder>,
         handler: DynTxHandler,
     ) -> BoxFut<'static, K2Result<DynTransport>> {
-        let endpoint = self.endpoint.clone();
+        let integration = self.integration.lock().unwrap().take();
+        if self
+            .initialized
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+        {
+            return Box::pin(async move {
+                Err(K2Error::other(
+                    "IrohTransportFactory can only be instantiated once",
+                ))
+            });
+        }
+
         Box::pin(async move {
             let config: IrohTransportModConfig =
                 builder.config.get_module_config()?;
@@ -88,7 +131,7 @@ impl TransportFactory for IrohTransportFactory {
             let imp = IrohTransport::create(
                 config.iroh_transport,
                 handler.clone(),
-                endpoint,
+                integration,
             )
             .await?;
             Ok(DefaultTransport::create(&handler, imp))
@@ -101,7 +144,7 @@ pub const ALPN: &[u8] = b"kitsune2";
 
 #[derive(Debug)]
 struct IrohTransport {
-    endpoint: Arc<Endpoint>,
+    endpoint: IrohSender,
     handler: Arc<TxImpHnd>,
     connections: Arc<Mutex<BTreeMap<NodeAddr, Connection>>>,
     tasks: Vec<tokio::task::AbortHandle>,
@@ -119,7 +162,7 @@ impl IrohTransport {
     pub async fn create(
         config: IrohTransportConfig,
         handler: Arc<TxImpHnd>,
-        endpoint: Option<iroh::Endpoint>,
+        integration: Option<IrohIntegration>,
     ) -> K2Result<DynTxImp> {
         let relay_mode = match config.custom_relay_url {
             Some(relay_url_str) => {
@@ -131,42 +174,42 @@ impl IrohTransport {
             }
             None => RelayMode::Default,
         };
-        let endpoint = if let Some(endpoint) = endpoint {
-            endpoint
+        let (sender, listener) = if let Some(integration) = integration {
+            (
+                IrohSender(integration.endpoint),
+                IrohListener::Receiver(integration.receiver),
+            )
         } else {
-            iroh::Endpoint::builder()
+            let endpoint = iroh::Endpoint::builder()
                 .relay_mode(relay_mode)
                 .alpns(vec![ALPN.to_vec()])
                 .bind()
                 .await
-                .map_err(|err| K2Error::other("bad"))?
+                .map_err(|err| K2Error::other("bad"))?;
+            let _relay_url = endpoint
+                .home_relay()
+                .initialized()
+                .await
+                .map_err(|err| K2Error::other("bad"))?;
+
+            (
+                IrohSender(endpoint.clone()),
+                IrohListener::Endpoint(endpoint),
+            )
         };
 
-        println!(
-            "MY ENDPOINT node_id: {:?} {}",
-            endpoint.node_id(),
-            base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(endpoint.node_id())
-        );
-        tracing::info!(
-            "MY ENDPOINT node_id: {:?} {}",
-            endpoint.node_id(),
-            base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(endpoint.node_id())
-        );
-
-        let _relay_url = endpoint.home_relay().initialized().await.unwrap();
-        let endpoint = Arc::new(endpoint);
-
         let h = handler.clone();
-        let e = endpoint.clone();
+        let e = sender.clone();
         let watch_relay_task = tokio::spawn(async move {
             loop {
-                match e.home_relay().updated().await {
+                match e.0.home_relay().updated().await {
                     Ok(new_urls) => {
                         let Some(url) = new_urls else {
                             break;
                         };
-                        let url = to_peer_url(url.clone().into(), e.node_id())
-                            .expect("Invalid URL");
+                        let url =
+                            to_peer_url(url.clone().into(), e.0.node_id())
+                                .expect("Invalid URL");
 
                         tracing::info!("New relay URL: {url:?}");
 
@@ -182,13 +225,16 @@ impl IrohTransport {
         })
         .abort_handle();
 
-        let evt_task =
-            tokio::task::spawn(evt_task(handler.clone(), endpoint.clone()))
-                .abort_handle();
+        let evt_task = tokio::task::spawn(evt_task(
+            handler.clone(),
+            sender.clone(),
+            listener,
+        ))
+        .abort_handle();
 
         let out: DynTxImp = Arc::new(Self {
             handler,
-            endpoint,
+            endpoint: sender,
             connections: Arc::new(Mutex::new(BTreeMap::new())),
             tasks: vec![watch_relay_task, evt_task],
         });
@@ -276,7 +322,7 @@ fn node_addr_to_peer_url(node_addr: NodeAddr) -> Result<Url, K2Error> {
 
 impl TxImp for IrohTransport {
     fn url(&self) -> Option<Url> {
-        let home_relay = self.endpoint.home_relay().get();
+        let home_relay = self.endpoint.0.home_relay().get();
         let Ok(urls) = home_relay else {
             tracing::error!("Failed to get home relay");
             return None;
@@ -286,7 +332,7 @@ impl TxImp for IrohTransport {
             return None;
         };
         Some(
-            to_peer_url(url.clone().into(), self.endpoint.node_id())
+            to_peer_url(url.clone().into(), self.endpoint.0.node_id())
                 .expect("Invalid URL"),
         )
     }
@@ -317,7 +363,7 @@ impl TxImp for IrohTransport {
             })?;
 
             let connection_result =
-                self.endpoint.connect(addr.clone(), ALPN).await;
+                self.endpoint.0.connect(addr.clone(), ALPN).await;
 
             let connection = match connection_result {
                 Ok(c) => c,
@@ -411,9 +457,16 @@ impl TxImp for IrohTransport {
     }
 }
 
-async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
-    while let Some(incoming) = endpoint.accept().await {
-        let endpoint = endpoint.clone();
+async fn evt_task(
+    handler: Arc<TxImpHnd>,
+    sender: IrohSender,
+    mut listener: IrohListener,
+) {
+    while let Some(incoming) = match &mut listener {
+        IrohListener::Endpoint(endpoint) => endpoint.accept().await,
+        IrohListener::Receiver(receiver) => receiver.recv().await,
+    } {
+        let ep = sender.clone();
         let handler = handler.clone();
         tokio::spawn(async move {
             let connection = match incoming.await {
@@ -440,7 +493,7 @@ async fn evt_task(handler: Arc<TxImpHnd>, endpoint: Arc<Endpoint>) {
                 return;
             };
 
-            let Some(remote_info) = endpoint.remote_info(node_id) else {
+            let Some(remote_info) = ep.0.remote_info(node_id) else {
                 tracing::error!("Remote info error ");
                 return;
             };
