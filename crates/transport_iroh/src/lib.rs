@@ -43,17 +43,23 @@ pub mod config {
     }
 }
 
-/// Specifies how to integrate with external iroh protocols using this endpoint.
+/// Specifies how to integrate kitsune's iroh transport into an existing endpoint.
+///
+/// Iroh can only really accommodate a single accept loop for a given endpoint.
+/// Kitsune needs its own logic for accepting connections, but if you want to run
+/// other protocols on the same endpoint (e.g. iroh-blobs), you can define an accept
+/// loop externally, and for the kitsune2 ALPN, send the incoming connections
+/// to kitsune via the `receiver` here.
 pub struct IrohIntegration {
     /// The shared iroh endpoint
     pub endpoint: iroh::Endpoint,
     /// The receiver for incoming connections from the "mother" protocol.
-    pub receiver: Receiver<iroh::endpoint::Incoming>,
+    pub receiver: Receiver<iroh::endpoint::Connection>,
 }
 
 enum IrohListener {
     Endpoint(Endpoint),
-    Receiver(Receiver<iroh::endpoint::Incoming>),
+    Receiver(Receiver<iroh::endpoint::Connection>),
 }
 
 #[derive(Clone, Debug)]
@@ -80,7 +86,7 @@ impl IrohTransportFactory {
     /// Construct a new IrohTransportFactory.
     pub fn create(integration: Option<IrohIntegration>) -> DynTransportFactory {
         let out: DynTransportFactory = Arc::new(IrohTransportFactory {
-            integration: std::sync::Mutex::new(None),
+            integration: std::sync::Mutex::new(integration),
             initialized: AtomicBool::new(false),
         });
         out
@@ -197,6 +203,7 @@ impl IrohTransport {
                 IrohListener::Endpoint(endpoint),
             )
         };
+        println!("k2 endpoint node_id: {:?}", sender.0.node_id());
 
         let h = handler.clone();
         let e = sender.clone();
@@ -462,20 +469,15 @@ async fn evt_task(
     sender: IrohSender,
     mut listener: IrohListener,
 ) {
-    while let Some(incoming) = match &mut listener {
-        IrohListener::Endpoint(endpoint) => endpoint.accept().await,
+    while let Some(connection) = match &mut listener {
+        IrohListener::Endpoint(endpoint) => {
+            endpoint.accept().await.expect("TODO").await.ok()
+        }
         IrohListener::Receiver(receiver) => receiver.recv().await,
     } {
         let ep = sender.clone();
         let handler = handler.clone();
         tokio::spawn(async move {
-            let connection = match incoming.await {
-                Ok(c) => c,
-                Err(err) => {
-                    tracing::error!("Incoming connection error: {err:?}.");
-                    return;
-                }
-            };
             let mut recv = match connection.accept_uni().await {
                 Ok(r) => r,
                 Err(err) => {
