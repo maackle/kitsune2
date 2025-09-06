@@ -4,7 +4,7 @@
 use base64::Engine;
 use iroh::{
     endpoint::{Connection, VarInt},
-    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl,
+    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, Watcher,
 };
 use kitsune2_api::*;
 use std::{
@@ -174,7 +174,9 @@ impl IrohTransport {
             Some(relay_url_str) => {
                 let relay_url = url::Url::parse(relay_url_str.as_str())
                     .map_err(|err| {
-                        K2Error::other("Failed to parse custom relay url")
+                        K2Error::other(format!(
+                            "Failed to parse custom relay url: {err}"
+                        ))
                     })?;
                 RelayMode::Custom(RelayMap::from(RelayUrl::from(relay_url)))
             }
@@ -191,12 +193,8 @@ impl IrohTransport {
                 .alpns(vec![ALPN.to_vec()])
                 .bind()
                 .await
-                .map_err(|err| K2Error::other("bad"))?;
-            let _relay_url = endpoint
-                .home_relay()
-                .initialized()
-                .await
-                .map_err(|err| K2Error::other("bad"))?;
+                .map_err(|err| K2Error::other(format!("bad: {err}")))?;
+            let _relay_url = endpoint.home_relay().initialized().await;
 
             (
                 IrohSender(endpoint.clone()),
@@ -211,16 +209,15 @@ impl IrohTransport {
             loop {
                 match e.0.home_relay().updated().await {
                     Ok(new_urls) => {
-                        let Some(url) = new_urls else {
-                            break;
-                        };
-                        let url =
-                            to_peer_url(url.clone().into(), e.0.node_id())
-                                .expect("Invalid URL");
+                        for url in new_urls {
+                            let url =
+                                to_peer_url(url.clone().into(), e.0.node_id())
+                                    .expect("Invalid URL");
 
-                        tracing::info!("New relay URL: {url:?}");
+                            tracing::info!("New relay URL: {url:?}");
 
-                        h.new_listening_address(url).await
+                            h.new_listening_address(url).await
+                        }
                     }
                     Err(err) => {
                         tracing::error!(
@@ -334,7 +331,7 @@ impl TxImp for IrohTransport {
             tracing::error!("Failed to get home relay");
             return None;
         };
-        let Some(url) = urls else {
+        let Some(url) = urls.first() else {
             tracing::error!("Failed to get home relay");
             return None;
         };
@@ -414,11 +411,12 @@ impl TxImp for IrohTransport {
                 }
             };
 
-            send.write_all(data.as_ref())
-                .await
-                .map_err(|err| K2Error::other("Failed to write all"))?;
-            send.finish()
-                .map_err(|err| K2Error::other("Failed to close stream"))?;
+            send.write_all(data.as_ref()).await.map_err(|err| {
+                K2Error::other(format!("Failed to write all: {err:?}"))
+            })?;
+            send.finish().map_err(|err| {
+                K2Error::other(format!("Failed to close stream: {err:?}"))
+            })?;
             connection.closed().await;
             Ok(())
         })
@@ -438,7 +436,7 @@ impl TxImp for IrohTransport {
                     .collect(),
                 connections: connections
                     .iter()
-                    .map(|(peer_addr, conn)| TransportConnectionStats {
+                    .map(|(peer_addr, _conn)| TransportConnectionStats {
                         pub_key: base64::prelude::BASE64_URL_SAFE_NO_PAD
                             .encode(peer_addr.node_id),
                         send_message_count: 0,
