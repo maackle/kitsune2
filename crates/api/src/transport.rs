@@ -14,6 +14,7 @@ pub struct TxImpHnd {
     handler: DynTxHandler,
     space_map: Arc<Mutex<HashMap<SpaceId, DynTxSpaceHandler>>>,
     mod_map: Arc<Mutex<HashMap<(SpaceId, String), DynTxModuleHandler>>>,
+    blocked_message_counts: Arc<Mutex<HashMap<Url, HashMap<SpaceId, u32>>>>,
 }
 
 impl TxImpHnd {
@@ -25,6 +26,7 @@ impl TxImpHnd {
             handler,
             space_map: Arc::new(Mutex::new(HashMap::new())),
             mod_map: Arc::new(Mutex::new(HashMap::new())),
+            blocked_message_counts: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -270,7 +272,14 @@ pub trait Transport: 'static + Send + Sync + std::fmt::Debug {
     fn unregister_space(&self, space_id: SpaceId) -> BoxFut<'_, ()>;
 
     /// Dump network stats.
-    fn dump_network_stats(&self) -> BoxFut<'_, K2Result<TransportStats>>;
+    fn dump_network_stats(&self) -> BoxFut<'_, K2Result<ApiTransportStats>>;
+
+    /// Increment the count of blocked messages for the given peer URL.
+    fn incr_blocked_message_count(
+        &self,
+        peer_url: Url,
+        space_id: SpaceId,
+    ) -> BoxFut<'_, K2Result<()>>;
 }
 
 /// Trait-object [Transport].
@@ -291,6 +300,7 @@ pub struct DefaultTransport {
     imp: DynTxImp,
     space_map: Arc<Mutex<HashMap<SpaceId, DynTxSpaceHandler>>>,
     mod_map: Arc<Mutex<HashMap<(SpaceId, String), DynTxModuleHandler>>>,
+    blocked_message_counts: Arc<Mutex<HashMap<Url, HashMap<SpaceId, u32>>>>,
 }
 
 impl DefaultTransport {
@@ -304,6 +314,7 @@ impl DefaultTransport {
             imp,
             space_map: hnd.space_map.clone(),
             mod_map: hnd.mod_map.clone(),
+            blocked_message_counts: hnd.blocked_message_counts.clone(),
         });
         out
     }
@@ -418,8 +429,37 @@ impl Transport for DefaultTransport {
         })
     }
 
-    fn dump_network_stats(&self) -> BoxFut<'_, K2Result<TransportStats>> {
-        self.imp.dump_network_stats()
+    fn dump_network_stats(&self) -> BoxFut<'_, K2Result<ApiTransportStats>> {
+        Box::pin(async {
+            let low_level_stats = self.imp.dump_network_stats().await?;
+            let blocked_message_counts =
+                self.blocked_message_counts.lock().expect("poisoned");
+            Ok(ApiTransportStats {
+                transport_stats: low_level_stats,
+                blocked_message_counts: blocked_message_counts.clone(),
+            })
+        })
+    }
+
+    fn incr_blocked_message_count(
+        &self,
+        peer_url: Url,
+        space_id: SpaceId,
+    ) -> BoxFut<'_, K2Result<()>> {
+        Box::pin(async {
+            let mut blocked_message_counts =
+                self.blocked_message_counts.lock().expect("poisoned");
+            blocked_message_counts
+                .entry(peer_url)
+                .and_modify(|space_counts| {
+                    space_counts
+                        .entry(space_id.clone())
+                        .and_modify(|c| *c += 1)
+                        .or_insert(1);
+                })
+                .or_insert([(space_id, 1)].into());
+            Ok(())
+        })
     }
 }
 
@@ -548,6 +588,16 @@ pub trait TransportFactory: 'static + Send + Sync + std::fmt::Debug {
 
 /// Trait-object [TransportFactory].
 pub type DynTransportFactory = Arc<dyn TransportFactory>;
+
+/// Extended transport stats exposed via the API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiTransportStats {
+    /// Stats from the configured transport implementation.
+    pub transport_stats: TransportStats,
+
+    /// Blocked message counts.
+    pub blocked_message_counts: HashMap<Url, HashMap<SpaceId, u32>>,
+}
 
 /// Stats for a transport connection.
 ///
