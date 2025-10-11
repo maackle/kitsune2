@@ -196,7 +196,6 @@ impl IrohTransport {
                 .bind()
                 .await
                 .map_err(|err| K2Error::other(format!("bad: {err}")))?;
-            let _relay_url = endpoint.home_relay().initialized().await;
 
             (
                 IrohSender(endpoint.clone()),
@@ -207,29 +206,30 @@ impl IrohTransport {
 
         let h = handler.clone();
         let e = sender.clone();
-        let watch_relay_task = tokio::spawn(async move {
-            loop {
-                match e.0.home_relay().updated().await {
-                    Ok(new_urls) => {
-                        for url in new_urls {
-                            let url =
-                                to_peer_url(url.clone().into(), e.0.node_id())
-                                    .expect("Invalid URL");
+        // XXX: home_relay removed after iroh 0.90, what to do?
+        // let watch_relay_task = tokio::spawn(async move {
+        //     loop {
+        //         match e.0.home_relay().updated().await {
+        //             Ok(new_urls) => {
+        //                 for url in new_urls {
+        //                     let url =
+        //                         to_peer_url(url.clone().into(), e.0.node_id())
+        //                             .expect("Invalid URL");
 
-                            tracing::info!("New relay URL: {url:?}");
+        //                     tracing::info!("New relay URL: {url:?}");
 
-                            h.new_listening_address(url).await
-                        }
-                    }
-                    Err(err) => {
-                        tracing::error!(
-                            "Failed to get new relay url: {err:?}."
-                        );
-                    }
-                }
-            }
-        })
-        .abort_handle();
+        //                     h.new_listening_address(url).await
+        //                 }
+        //             }
+        //             Err(err) => {
+        //                 tracing::error!(
+        //                     "Failed to get new relay url: {err:?}."
+        //                 );
+        //             }
+        //         }
+        //     }
+        // })
+        // .abort_handle();
 
         let evt_task = tokio::task::spawn(evt_task(
             handler.clone(),
@@ -242,7 +242,8 @@ impl IrohTransport {
             handler,
             endpoint: sender,
             connections: Arc::new(Mutex::new(BTreeMap::new())),
-            tasks: vec![watch_relay_task, evt_task],
+            tasks: vec![evt_task],
+            // tasks: vec![watch_relay_task, evt_task],
         });
 
         Ok(out)
@@ -328,19 +329,21 @@ fn node_addr_to_peer_url(node_addr: NodeAddr) -> Result<Url, K2Error> {
 
 impl TxImp for IrohTransport {
     fn url(&self) -> Option<Url> {
-        let home_relay = self.endpoint.0.home_relay().get();
-        let Ok(urls) = home_relay else {
-            tracing::error!("Failed to get home relay");
-            return None;
-        };
-        let Some(url) = urls.first() else {
-            tracing::error!("Failed to get home relay");
-            return None;
-        };
-        Some(
-            to_peer_url(url.clone().into(), self.endpoint.0.node_id())
-                .expect("Invalid URL"),
-        )
+        // XXX: home_relay removed after iroh 0.90, what to do?
+        // let home_relay = self.endpoint.0.home_relay().get();
+        // let Ok(urls) = home_relay else {
+        //     tracing::error!("Failed to get home relay");
+        //     return None;
+        // };
+        // let Some(url) = urls.first() else {
+        //     tracing::error!("Failed to get home relay");
+        //     return None;
+        // };
+        // Some(
+        //     to_peer_url(url.clone().into(), self.endpoint.0.node_id())
+        //         .expect("Invalid URL"),
+        // )
+        None
     }
 
     fn disconnect(
@@ -495,26 +498,27 @@ async fn evt_task(
                 return;
             };
 
-            let Some(remote_info) = ep.0.remote_info(node_id) else {
-                tracing::error!("Remote info error ");
-                return;
-            };
-            let Some(relay_url_info) = remote_info.relay_url else {
-                tracing::error!("Remote info error ");
-                return;
-            };
+            // XXX: removed in iroh 0.90, what do to?
+            // let Some(remote_info) = ep.0.remote_info(node_id) else {
+            //     tracing::error!("Remote info error ");
+            //     return;
+            // };
+            // let Some(relay_url_info) = remote_info.relay_url else {
+            //     tracing::error!("Remote info error ");
+            //     return;
+            // };
 
-            let Ok(peer) =
-                to_peer_url(relay_url_info.relay_url.into(), node_id)
-            else {
-                tracing::error!("Url from str error");
-                return;
-            };
+            // let Ok(peer) =
+            //     to_peer_url(relay_url_info.relay_url.into(), node_id)
+            // else {
+            //     tracing::error!("Url from str error");
+            //     return;
+            // };
 
-            let Ok(()) = handler.recv_data(peer, data.into()) else {
-                tracing::error!("recv_data error");
-                return;
-            };
+            // let Ok(()) = handler.recv_data(peer, data.into()) else {
+            //     tracing::error!("recv_data error");
+            //     return;
+            // };
             connection.close(VarInt::from_u32(0), b"ended");
         });
     }
