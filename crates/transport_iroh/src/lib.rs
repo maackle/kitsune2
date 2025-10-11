@@ -189,6 +189,8 @@ impl IrohTransport {
             )
         } else {
             let endpoint = iroh::Endpoint::builder()
+                .discovery_local_network()
+                .discovery_n0()
                 .relay_mode(relay_mode)
                 .alpns(vec![ALPN.to_vec()])
                 .bind()
