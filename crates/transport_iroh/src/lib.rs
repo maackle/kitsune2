@@ -328,11 +328,7 @@ fn node_addr_to_peer_url(node_addr: NodeAddr) -> Result<Url, K2Error> {
 
 impl TxImp for IrohTransport {
     fn url(&self) -> Option<Url> {
-        let home_relay = self.endpoint.0.home_relay().get();
-        let Ok(urls) = home_relay else {
-            tracing::error!("Failed to get home relay");
-            return None;
-        };
+        let urls = self.endpoint.0.home_relay().get();
         let Some(url) = urls.first() else {
             tracing::error!("Failed to get home relay");
             return None;
