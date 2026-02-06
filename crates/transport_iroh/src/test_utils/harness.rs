@@ -20,7 +20,7 @@ impl IrohTransportTestHarness {
     /// Create a new test harness.
     pub async fn new() -> Self {
         let builder = Builder {
-            transport: IrohTransportFactory::create(),
+            transport: IrohTransportFactory::create(None),
             ..kitsune2_core::default_test_builder()
         }
         .with_default_config()

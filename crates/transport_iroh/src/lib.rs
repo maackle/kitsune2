@@ -274,13 +274,20 @@ pub mod config {
 pub use config::*;
 
 /// Kitsune2 transport factory backed by iroh.
-#[derive(Debug)]
-pub struct IrohTransportFactory;
+pub struct IrohTransportFactory {
+    integration: Option<IrohIntegration>,
+}
+
+impl std::fmt::Debug for IrohTransportFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "IrohTransportFactory")
+    }
+}
 
 impl IrohTransportFactory {
     /// Create a new factory instance.
-    pub fn create() -> DynTransportFactory {
-        Arc::new(Self)
+    pub fn create(integration: Option<IrohIntegration>) -> DynTransportFactory {
+        Arc::new(Self { integration })
     }
 }
 
