@@ -194,6 +194,7 @@ use std::{
 use tokio::task::AbortHandle;
 use tracing::{debug, error, info, warn};
 
+mod endpoint_integration;
 mod frame;
 use frame::*;
 mod url;
@@ -203,6 +204,8 @@ mod connection_context;
 mod endpoint;
 mod stream;
 use connection_context::*;
+
+pub use endpoint_integration::*;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
