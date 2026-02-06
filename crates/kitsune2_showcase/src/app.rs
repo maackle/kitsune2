@@ -5,6 +5,7 @@ use file_data::FileData;
 use file_op_store::{FileOpStoreFactory, FileStoreLookup};
 use kitsune2_api::*;
 use kitsune2_core::{factories::MemoryOp, get_all_remote_agents};
+#[cfg(feature = "transport-tx5")]
 use kitsune2_transport_tx5::{IceServers, WebRtcConfig};
 use std::{ffi::OsStr, fmt::Debug, path::Path, sync::Arc, time::SystemTime};
 use tokio::{
@@ -81,6 +82,7 @@ impl App {
             fn create_space(
                 &self,
                 _space_id: SpaceId,
+                _config_override: Option<&Config>,
             ) -> BoxFut<'_, K2Result<DynSpaceHandler>> {
                 Box::pin(async move {
                     let s: DynSpaceHandler = Arc::new(S(self.0.clone()));
@@ -107,18 +109,19 @@ impl App {
         builder.config.set_module_config(
             &kitsune2_core::factories::CoreBootstrapModConfig {
                 core_bootstrap: kitsune2_core::factories::CoreBootstrapConfig {
-                    server_url: args.bootstrap_url,
+                    server_url: Some(args.bootstrap_url),
                     ..Default::default()
                 },
             },
         )?;
 
+        #[cfg(feature = "transport-tx5")]
         builder.config.set_module_config(
             &kitsune2_transport_tx5::Tx5TransportModConfig {
                 tx5_transport: kitsune2_transport_tx5::Tx5TransportConfig {
                     signal_allow_plain_text: true,
                     server_url: args.signal_url,
-                    timeout_s: 10,
+                    timeout_s: 30,
                     webrtc_config: WebRtcConfig {
                         ice_servers: vec![IceServers {
                             urls: vec![
@@ -130,6 +133,18 @@ impl App {
                         }],
                         ice_transport_policy: Default::default(),
                     },
+                    webrtc_connect_timeout_s: 15,
+                    ..Default::default()
+                },
+            },
+        )?;
+
+        #[cfg(feature = "transport-iroh")]
+        builder.config.set_module_config(
+            &kitsune2_transport_iroh::IrohTransportModConfig {
+                iroh_transport: kitsune2_transport_iroh::IrohTransportConfig {
+                    relay_allow_plain_text: true,
+                    relay_url: Some(args.relay_url),
                     ..Default::default()
                 },
             },
@@ -143,7 +158,7 @@ impl App {
         let kitsune = builder.build().await?;
         kitsune.register_handler(h).await?;
         let transport = kitsune.transport().await?;
-        let space = kitsune.space(space_id).await?;
+        let space = kitsune.space(space_id, None).await?;
 
         let agent = Arc::new(kitsune2_core::Ed25519LocalAgent::default());
         agent.set_tgt_storage_arc_hint(DhtArc::FULL);

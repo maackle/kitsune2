@@ -32,7 +32,8 @@ impl KitsuneFactory for CoreKitsuneFactory {
         builder: Arc<Builder>,
     ) -> BoxFut<'static, K2Result<DynKitsune>> {
         Box::pin(async move {
-            let out: DynKitsune = Arc::new(CoreKitsune::new(builder));
+            let out = CoreKitsune::new(builder).await?;
+            let out: DynKitsune = Arc::new(out);
             Ok(out)
         })
     }
@@ -55,7 +56,7 @@ impl TxHandler for TxHandlerTranslator {
     fn preflight_gather_outgoing(
         &self,
         peer_url: Url,
-    ) -> K2Result<bytes::Bytes> {
+    ) -> BoxFut<'_, K2Result<bytes::Bytes>> {
         self.0.preflight_gather_outgoing(peer_url)
     }
 
@@ -63,7 +64,7 @@ impl TxHandler for TxHandlerTranslator {
         &self,
         peer_url: Url,
         data: bytes::Bytes,
-    ) -> K2Result<()> {
+    ) -> BoxFut<'_, K2Result<()>> {
         self.0.preflight_validate_incoming(peer_url, data)
     }
 }
@@ -77,16 +78,18 @@ struct CoreKitsune {
     handler: std::sync::OnceLock<DynKitsuneHandler>,
     map: std::sync::Mutex<Map>,
     tx: std::sync::OnceLock<DynTransport>,
+    report: std::sync::OnceLock<DynReport>,
 }
 
 impl CoreKitsune {
-    pub fn new(builder: Arc<Builder>) -> Self {
-        Self {
+    pub async fn new(builder: Arc<Builder>) -> K2Result<Self> {
+        Ok(Self {
             builder,
             handler: std::sync::OnceLock::new(),
             map: std::sync::Mutex::new(HashMap::new()),
             tx: std::sync::OnceLock::new(),
-        }
+            report: std::sync::OnceLock::new(),
+        })
     }
 }
 
@@ -111,8 +114,15 @@ impl Kitsune for CoreKitsune {
                 )
                 .await?;
 
+            let report = self
+                .builder
+                .report
+                .create(self.builder.clone(), tx.clone())
+                .await?;
+
             self.handler.set(handler).map_err(|_| K2Error::other(ERR))?;
             self.tx.set(tx).map_err(|_| K2Error::other(ERR))?;
+            self.report.set(report).map_err(|_| K2Error::other(ERR))?;
 
             Ok(())
         })
@@ -122,7 +132,11 @@ impl Kitsune for CoreKitsune {
         self.map.lock().unwrap().keys().cloned().collect()
     }
 
-    fn space(&self, space_id: SpaceId) -> BoxFut<'_, K2Result<DynSpace>> {
+    fn space(
+        &self,
+        space_id: SpaceId,
+        config_override: Option<Config>,
+    ) -> BoxFut<'_, K2Result<DynSpace>> {
         Box::pin(async move {
             const ERR: &str = "handler not registered";
             use std::collections::hash_map::Entry;
@@ -144,13 +158,29 @@ impl Kitsune for CoreKitsune {
                         .get()
                         .ok_or_else(|| K2Error::other(ERR))?
                         .clone();
+                    let report = self
+                        .report
+                        .get()
+                        .ok_or_else(|| K2Error::other(ERR))?
+                        .clone();
                     e.insert(futures::future::FutureExt::shared(Box::pin(
                         async move {
-                            let sh =
-                                handler.create_space(space_id.clone()).await?;
+                            let sh = handler
+                                .create_space(
+                                    space_id.clone(),
+                                    config_override.as_ref(),
+                                )
+                                .await?;
                             let s = builder
                                 .space
-                                .create(builder.clone(), sh, space_id, tx)
+                                .create(
+                                    builder.clone(),
+                                    config_override,
+                                    sh,
+                                    space_id,
+                                    report,
+                                    tx,
+                                )
                                 .await?;
                             Ok(s)
                         },
@@ -284,6 +314,13 @@ impl Kitsune for CoreKitsune {
                 .ok_or_else(|| K2Error::other("Transport not registered yet"))
         })
     }
+
+    fn report(&self) -> K2Result<DynReport> {
+        self.report
+            .get()
+            .cloned()
+            .ok_or_else(|| K2Error::other("Report not registered yet"))
+    }
 }
 
 #[cfg(test)]
@@ -318,6 +355,7 @@ mod test {
             fn create_space(
                 &self,
                 _space_id: SpaceId,
+                _config_override: Option<&Config>,
             ) -> BoxFut<'_, K2Result<DynSpaceHandler>> {
                 Box::pin(async move {
                     let s: DynSpaceHandler = Arc::new(S);
@@ -337,6 +375,6 @@ mod test {
 
         k.register_handler(h).await.unwrap();
 
-        k.space(TEST_SPACE_ID).await.unwrap();
+        k.space(TEST_SPACE_ID, None).await.unwrap();
     }
 }

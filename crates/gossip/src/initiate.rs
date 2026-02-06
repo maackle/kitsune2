@@ -75,25 +75,36 @@ pub fn spawn_initiate_task(
                         // Continue to the next iteration
                     }
                     _ = force_initiate_rx.recv() => {
-                        tracing::info!("Force initiate received, skipping the remaining delay and attempting initiation");
+                        tracing::debug!("Force initiate received, skipping the remaining delay and attempting initiation");
                     }
                 }
             } else {
-                // At least one agent is still growing its arc, we should wait for the fetch queue
-                // to be drained and then go ahead with the initiation.
+                // At least one agent is still growing its arc, we should try to wait for the fetch
+                // queue to be drained and then go ahead with the initiation.
                 let (tx, rx) = futures::channel::oneshot::channel();
                 gossip.fetch.notify_on_drained(tx);
-                rx.await.ok();
 
-                // If the fetch queue is empty and there's nobody to gossip with then this loop
-                // would just spin. So use the initial initiate interval to wait a short amount of
-                // time before trying to initiate again.
-                // For this reason, this configuration value should be set to a small value!
-                tokio::time::sleep(initial_initiate_interval).await;
+                // Prepare the delay based on the configured initiate interval.
+                let delay = tokio::time::sleep(compute_delay(initiate_interval));
+
+                tokio::select! {
+                    _ = delay => {
+                        tracing::info!("Wanted the fetch queue to drain but the delay expired first, proceeding with gossip initiation");
+                    }
+                    r = rx => {
+                        // If the fetch queue is empty and there's nobody to gossip with then this loop
+                        // would just spin. So use the initial initiate interval to wait a short amount of
+                        // time before trying to initiate again.
+                        // For this reason, this configuration value should be set to a small value!
+                        tokio::time::sleep(initial_initiate_interval).await;
+
+                        tracing::debug!(?r, "Fetch queue drained, proceeding with gossip initiation");
+                    }
+                }
             }
 
             if gossip.initiated_round_state.lock().await.is_some() {
-                tracing::info!("Not initiating gossip because there is already an initiated round");
+                tracing::debug!("Not initiating gossip because there is already an initiated round");
                 continue;
             }
 
@@ -201,7 +212,7 @@ async fn select_next_target(
 
     // We tried using overlapping agents, but they're all on timeout
     if possible_target.is_none() && using_overlapping_agents {
-        tracing::info!(
+        tracing::debug!(
             "All agents with overlapping arcs are on timeout, selecting from all agents"
         );
 
@@ -255,7 +266,7 @@ async fn select_responsive_and_least_recently_gossiped(
             continue;
         };
 
-        // Agent has been marked as unreachable, we won't be able to gossip
+        // Agent has been marked as unresponsive, we won't be able to gossip
         // with them.
         if peer_meta_store
             .get_unresponsive(url.clone())

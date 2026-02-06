@@ -3,6 +3,7 @@
 use crate::harness::{MockTxHandler, Tx5TransportTestHarness};
 
 use super::*;
+use kitsune2_test_utils::enable_tracing;
 use kitsune2_test_utils::space::TEST_SPACE_ID;
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -60,6 +61,59 @@ fn validate_plain_server_url() {
 
     let result = format!("{:?}", builder.validate_config());
     assert!(result.contains("disallowed plaintext signal url"));
+}
+
+#[test]
+fn validate_bad_timeout_s_and_webrtc_connect_timeout_s() {
+    let builder = Builder {
+        transport: Tx5TransportFactory::create(),
+        ..kitsune2_core::default_test_builder()
+    };
+
+    // webrtc_connect_timeout_s cannot be equal to timeout_s
+    builder
+        .config
+        .set_module_config(&Tx5TransportModConfig {
+            tx5_transport: Tx5TransportConfig {
+                server_url: "ws://test.url".into(),
+                signal_allow_plain_text: true,
+                timeout_s: 10,
+                webrtc_connect_timeout_s: 10,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    assert!(builder.validate_config().is_err());
+
+    // webrtc_connect_timeout_s cannot be greater than timeout_s
+    builder
+        .config
+        .set_module_config(&Tx5TransportModConfig {
+            tx5_transport: Tx5TransportConfig {
+                server_url: "ws://test.url".into(),
+                signal_allow_plain_text: true,
+                timeout_s: 10,
+                webrtc_connect_timeout_s: 20,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    assert!(builder.validate_config().is_err());
+
+    // webrtc_connect_timeout_s must be less than timeout_s
+    builder
+        .config
+        .set_module_config(&Tx5TransportModConfig {
+            tx5_transport: Tx5TransportConfig {
+                server_url: "ws://test.url".into(),
+                signal_allow_plain_text: true,
+                timeout_s: 20,
+                webrtc_connect_timeout_s: 10,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    assert!(builder.validate_config().is_ok());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -131,9 +185,9 @@ async fn peer_connect_disconnect() {
     let t2 = test.build_transport(h2.clone()).await;
 
     let u1: Url = u1.lock().unwrap().clone();
-    println!("got u1: {}", u1);
+    println!("got u1: {u1}");
     let u2: Url = u2.lock().unwrap().clone();
-    println!("got u2: {}", u2);
+    println!("got u2: {u2}");
 
     // trigger a connection establish
     t1.send_space_notify(
@@ -207,7 +261,7 @@ async fn message_send_recv() {
     t2.register_module_handler(TEST_SPACE_ID, "mod".into(), h2.clone());
 
     let u2: Url = u2.lock().unwrap().clone();
-    println!("got u2: {}", u2);
+    println!("got u2: {u2}");
 
     // checks that send works
     t1.send_space_notify(
@@ -259,7 +313,7 @@ async fn message_send_recv_auth() {
     t2.register_module_handler(TEST_SPACE_ID, "mod".into(), h2.clone());
 
     let u2: Url = u2.lock().unwrap().clone();
-    println!("got u2: {}", u2);
+    println!("got u2: {u2}");
 
     // checks that send works
     t1.send_space_notify(
@@ -284,13 +338,14 @@ async fn message_send_recv_auth() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn preflight_send_recv() {
+    enable_tracing();
     use std::sync::atomic::*;
     let test = Tx5TransportTestHarness::new(None, None).await;
 
     let r1 = Arc::new(AtomicBool::new(false));
     let r1_2 = r1.clone();
 
-    let h1 = Arc::new(MockTxHandler {
+    let tx_handler_1 = Arc::new(MockTxHandler {
         pre_out: Arc::new(|_| Ok(bytes::Bytes::from_static(b"hello"))),
         pre_in: Arc::new(move |_, data| {
             assert_eq!(b"world", data.as_ref());
@@ -299,7 +354,8 @@ async fn preflight_send_recv() {
         }),
         ..Default::default()
     });
-    let t1 = test.build_transport(h1.clone()).await;
+    let t1 = test.build_transport(tx_handler_1.clone()).await;
+    t1.register_space_handler(TEST_SPACE_ID, tx_handler_1.clone());
 
     let r2 = Arc::new(AtomicBool::new(false));
     let r2_2 = r2.clone();
@@ -321,7 +377,7 @@ async fn preflight_send_recv() {
     let _t2 = test.build_transport(h2.clone()).await;
 
     let u2: Url = u2.lock().unwrap().clone();
-    println!("got u2: {}", u2);
+    println!("got u2: {u2}");
 
     // establish a connection
     t1.send_space_notify(
@@ -347,6 +403,8 @@ async fn preflight_send_recv() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn nonexistent_peer_marked_unresponsive() {
+    enable_tracing();
+
     // set the tx5 timeout to 5 seconds to keep the test reasonably short
     let test = Tx5TransportTestHarness::new(None, Some(3)).await;
 
@@ -371,9 +429,10 @@ async fn nonexistent_peer_marked_unresponsive() {
         tx_handler1.clone(),
     );
 
-    let faulty_url = Url::from_str(
-        "ws://127.0.0.1:40813/VtK2IOCncQM6LbWkvhB_CYwajQzw6Dii-Oc-0IRtHmc",
-    )
+    let faulty_url = Url::from_str(format!(
+        "ws://127.0.0.1:{}/VtK2IOCncQM6LbWkvhB_CYwajQzw6Dii-Oc-0IRtHmc",
+        test.port
+    ))
     .unwrap();
 
     let res = transport1
@@ -398,7 +457,9 @@ async fn nonexistent_peer_marked_unresponsive() {
 
     let url = maybe_url_and_when.unwrap().0;
 
-    assert!(faulty_url == url);
+    assert_eq!(faulty_url, url);
+
+    assert!(transport1.dump_network_stats().await.unwrap().transport_stats.connections.is_empty(), "Expected no connections to be present in the transport after sending to a non-existent peer, but found some.");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -409,6 +470,7 @@ async fn dump_network_stats() {
         ..Default::default()
     });
     let t1 = test.build_transport(h1.clone()).await;
+    t1.register_space_handler(TEST_SPACE_ID, h1);
 
     let u2 = Arc::new(Mutex::new(Url::from_str("ws://bla.bla:38/1").unwrap()));
     let h2 = Arc::new(MockTxHandler {
@@ -421,6 +483,7 @@ async fn dump_network_stats() {
         ..Default::default()
     });
     let t2 = test.build_transport(h2.clone()).await;
+    t2.register_space_handler(TEST_SPACE_ID, h2);
 
     // establish a connection
     let url2 = u2.lock().unwrap().clone();
@@ -436,20 +499,36 @@ async fn dump_network_stats() {
     let stats_1 = t1.dump_network_stats().await.unwrap();
     let stats_2 = t2.dump_network_stats().await.unwrap();
 
-    assert_eq!(stats_1.backend, "BackendLibDataChannel");
+    #[cfg(all(
+        feature = "backend-libdatachannel",
+        not(feature = "backend-go-pion")
+    ))]
+    assert_eq!(stats_1.transport_stats.backend, "BackendLibDataChannel");
+    #[cfg(all(
+        feature = "backend-go-pion",
+        not(feature = "backend-libdatachannel")
+    ))]
+    assert_eq!(stats_1.transport_stats.backend, "BackendGoPion");
+    #[cfg(all(
+        feature = "backend-go-pion",
+        feature = "backend-libdatachannel"
+    ))]
+    panic!("This test must be run with either libdatachannel or go-pion enabled, but not both.");
 
-    let peer_url_1 = stats_1.peer_urls.first().unwrap();
+    let peer_url_1 = stats_1.transport_stats.peer_urls.first().unwrap();
     let peer_id_1 = peer_url_1.peer_id().unwrap();
 
-    let peer_url_2 = stats_2.peer_urls.first().unwrap();
+    let peer_url_2 = stats_2.transport_stats.peer_urls.first().unwrap();
     let peer_id_2 = peer_url_2.peer_id().unwrap();
 
     let connection_list_1 = stats_1
+        .transport_stats
         .connections
         .iter()
         .map(|c| c.pub_key.clone())
         .collect::<HashSet<_>>();
     let connection_list_2 = stats_2
+        .transport_stats
         .connections
         .iter()
         .map(|c| c.pub_key.clone())

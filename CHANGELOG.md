@@ -2,8 +2,341 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## \[[0.4.0-dev.2](https://github.com/holochain/kitsune2/compare/v0.4.0-dev.1...v0.4.0-dev.2)\] - 2026-01-03
+
+### Features
+
+- Introduce iroh-relay feature in bootstrap srv by @jost-s in [#419](https://github.com/holochain/kitsune2/pull/419)
+  - For iroh to make direct connections, a relay server is needed. The bootstrap server is extended by a new feature "iroh-relay", which can be set instead of "sbd", needed for the tx5 transport.
+- Make iroh max frame size configurable by @jost-s in [#416](https://github.com/holochain/kitsune2/pull/416)
+- Set peer unresponsive on iroh connection error by @jost-s
+
+### Bug Fixes
+
+- Allow all features to be enabled by @jost-s in [#415](https://github.com/holochain/kitsune2/pull/415)
+  - Temporarily transport-tx5-* and transport-iroh could not be enabled simultaneously. This restriction has been lifted. When both tx5 and iroh transport features are enabled, the default builder will default to the tx5 transport. It can still be overridden by assigning a builder instance's transport an iroh transport factory.
+
+### Miscellaneous Tasks
+
+- Temporarily re-allow feature collision for release preparation
+
+### CI
+
+- Revert temporary workaround to allow clashing feature in release workflow by @jost-s
+
+### Refactor
+
+- Allow plain text urls for iroh relay by @jost-s in [#421](https://github.com/holochain/kitsune2/pull/421)
+- Use persistent streams in iroh connections by @jost-s in [#411](https://github.com/holochain/kitsune2/pull/411)
+  - Previously a uni-directional stream was created and destroyed for each message. That required a fixed delay to be awaited to make a preflight frame possible. Now the preflight is sent as a first frame on a newly opened connection and stream and the stream is kept alive until an error occurs or the connection is closed.
+
+## \[[0.4.0-dev.1](https://github.com/holochain/kitsune2/compare/v0.4.0-dev.0...v0.4.0-dev.1)\] - 2025-12-16
+
+### Features
+
+- \[**BREAKING**\] Allow Bootstrap URL to be overridden inside space configuration (#395) by @veeso in [#395](https://github.com/holochain/kitsune2/pull/395)
+  - This change allows to specify config overrides. New and existing keys will be overridden to the default configuration
+  - **Breaking Change**: This change adds the `config_overrides` argument to the space create
+- Implement network stats for iroh transport by @jost-s
+
+### CI
+
+- Temporary workaround to run prepare release (#413) by @veeso in [#413](https://github.com/holochain/kitsune2/pull/413)
+  - Currently this workflow fails because of features clash. Temporary fix to that is to add this nice flag
+  - Closes no
+
+### Refactor
+
+- Use iroh test utils for test relay server and remove relay_allow_plain_text option by @jost-s in [#409](https://github.com/holochain/kitsune2/pull/409)
+- Combine url and preflight frames in iroh transport by @jost-s in [#402](https://github.com/holochain/kitsune2/pull/402)
+- Move iroh test utils to test-utils folder behind feature by @jost-s in [#405](https://github.com/holochain/kitsune2/pull/405)
+- \[**BREAKING**\] Rename is_webrtc to is_direct by @jost-s in [#394](https://github.com/holochain/kitsune2/pull/394)
+
+### First-time Contributors
+
+- @veeso made their first contribution in [#413](https://github.com/holochain/kitsune2/pull/413)
+## \[[0.4.0-dev.0](https://github.com/holochain/kitsune2/compare/v0.3.0...v0.4.0-dev.0)\] - 2025-12-02
+
+### Features
+
+- Add iroh transport by @jost-s in [#382](https://github.com/holochain/kitsune2/pull/382)
+- Implement tracking peer access state as peers are added and removed in the peer store, so that the access check can be sync without needing to use `block_on` by @ThetaSinner
+- \[**BREAKING**\] Expose webrtc_connect_timeout to Tx5TransportConfig (#361) by @mattyg in [#361](https://github.com/holochain/kitsune2/pull/361)
+
+### Bug Fixes
+
+- Reduce log size of `ArcSet` with custom `Debug` implementation by @ThetaSinner in [#366](https://github.com/holochain/kitsune2/pull/366)
+- Drop locks as soon as possible when sending fetch queue drained notifications by @ThetaSinner
+- Unable to build libdatachannel in nix devShell due to missing clang lib (#363) by @mattyg in [#363](https://github.com/holochain/kitsune2/pull/363)
+- Reduce lock hold on `space_map` by @ThetaSinner in [#362](https://github.com/holochain/kitsune2/pull/362)
+
+### Miscellaneous Tasks
+
+- Describe error context when transcoding config by @jost-s
+- Upgrade rust to v1.91.1 by @jost-s in [#385](https://github.com/holochain/kitsune2/pull/385)
+- Stop printing on entry to `wait_ready` by @ThetaSinner in [#374](https://github.com/holochain/kitsune2/pull/374)
+- Bump tx5 to v0.8.1 & sbd to v0.4.0 by @jost-s in [#376](https://github.com/holochain/kitsune2/pull/376)
+
+### Build System
+
+- \[**BREAKING**\] Prefix tx5 and iroh features with transport by @jost-s in [#393](https://github.com/holochain/kitsune2/pull/393)
+- Add iroh feature by @jost-s
+- Upgrade sbd-server to 0.4.0, adds a cli arg 'otlp_endpoint' to kitsune2-bootstrap-server for configuring an opentelemetry endpoint for the sbd server (#375) by @mattyg in [#375](https://github.com/holochain/kitsune2/pull/375)
+
+### CI
+
+- Release from release branches by @ThetaSinner in [#367](https://github.com/holochain/kitsune2/pull/367)
+
+### Testing
+
+- Extract fn encode_frame_header and write unit tests in iroh transport by @jost-s in [#392](https://github.com/holochain/kitsune2/pull/392)
+- Add unit tests for decode_frame in iroh transport by @jost-s
+- Add iroh integration test harness and move tests by @jost-s
+- Improve error messaging in tests by @ThetaSinner
+- Add new `TestTxHandler` that can be used in tests that need a preflight implementation that shares agents by @ThetaSinner
+- Improve flaky gossip tests for sync by @ThetaSinner in [#365](https://github.com/holochain/kitsune2/pull/365)
+
+### Automated Changes
+
+- *(deps)* Bump actions/checkout from 5 to 6 by @dependabot[bot] in [#383](https://github.com/holochain/kitsune2/pull/383)
+  - Bumps [actions/checkout](https://github.com/actions/checkout) from 5 to 6. - [Release notes](https://github.com/actions/checkout/releases) - [Changelog](https://github.com/actions/checkout/blob/main/CHANGELOG.md) - [Commits](https://github.com/actions/checkout/compare/v5...v6)
+  - Updated-dependencies: - dependency-name: actions/checkout   dependency-version: '6'   dependency-type: direct:production   update-type: version-update:semver-major ...
+
+### First-time Contributors
+
+- @mattyg made their first contribution in [#375](https://github.com/holochain/kitsune2/pull/375)
+## \[[0.3.0](https://github.com/holochain/kitsune2/compare/v0.2.11...v0.3.0)\] - 2025-11-04
+
+### Features
+
+- Add CORS support to the bootstrap server by @ThetaSinner in [#355](https://github.com/holochain/kitsune2/pull/355)
+- Bare-bones Docusaurus site with kitsune2 styling (#336) by @pdaoust in [#336](https://github.com/holochain/kitsune2/pull/336)
+- Notify drained queue listeners when sending fetch request fails by @jost-s in [#338](https://github.com/holochain/kitsune2/pull/338)
+- Check if agents are blocked when receiving a message (#320) by @matthme in [#320](https://github.com/holochain/kitsune2/pull/320)
+- Add counter for blocked messages to the Transport trait (#335) by @matthme in [#335](https://github.com/holochain/kitsune2/pull/335)
+- \[**BREAKING**\] Add report module with fetched op api and no-op core report module by @neonphog
+- Upgrade tx5 to 0.8 by @ThetaSinner in [#322](https://github.com/holochain/kitsune2/pull/322)
+- Support the go-pion backend for tx5 as an optional configuration by @ThetaSinner in [#301](https://github.com/holochain/kitsune2/pull/301)
+- Make MemPeerStore inner insert method async by @cdunster
+- Use async Mutex for MemPeerStore inner by @cdunster
+- Add blocks module to the Space module by @cdunster
+- Add method to PeerStore to get agents by peer URL by @cdunster
+- Add common function to remove and block an agent by ID by @cdunster
+- Check if agents are blocked before inserting into peer_store by @cdunster
+- PeerStoreFactory::create now takes a DynBlocks by @cdunster
+- Add in-memory blocks implementation as default Blocks by @cdunster
+- Add mem_blocks module to implement Blocks and BlocksFactory by @cdunster
+  - This is an in-memory implementation to be used for testing only.
+- Add blocks factory to blocks module in API crate by @cdunster
+- Add blocks module to API crate by @cdunster
+- Add method to remove peer from peer_store based on AgentId by @cdunster
+
+### Bug Fixes
+
+- *(kitsune2_core)* Fix an issue in the `MemTransport` that allowed notify and module messages to be sent before the preflight exchange was complete by @ThetaSinner
+- Remove requests from state if they could not be sent to queue by @jost-s
+- \[**BREAKING**\] Remove as_any from report trait by @neonphog in [#331](https://github.com/holochain/kitsune2/pull/331)
+- When an empty target list was passed to MemBlocks::are_all_blocked() it incorrectly returned true (#321) by @matthme in [#321](https://github.com/holochain/kitsune2/pull/321)
+- Use default-features = false for transport dependencies by @ThetaSinner in [#314](https://github.com/holochain/kitsune2/pull/314)
+- Increase default re-insert delay for fetch requests by @ThetaSinner in [#317](https://github.com/holochain/kitsune2/pull/317)
+- Ensure the gossip initiate loop will always progress even if the fetch queue does not notify it by @ThetaSinner in [#304](https://github.com/holochain/kitsune2/pull/304)
+- Fetch should not error when too many messages have been received by @ThetaSinner in [#305](https://github.com/holochain/kitsune2/pull/305)
+- Close connections when marking a peer unresponsive by @ThetaSinner in [#303](https://github.com/holochain/kitsune2/pull/303)
+- Out of bounds panic in the DHT time module caused by a wrong bounds check by @ThetaSinner in [#285](https://github.com/holochain/kitsune2/pull/285)
+- Revert renaming of space field in AgentInfo (#278) by @matthme in [#278](https://github.com/holochain/kitsune2/pull/278)
+
+### Miscellaneous Tasks
+
+- *(kitsune2_core)* Add more tracing for prune and insert operations by @ThetaSinner
+- *(kitsune2_gossip)* Downgrade some common tracing logs from info to debug level to reduce noise in logs by @ThetaSinner in [#307](https://github.com/holochain/kitsune2/pull/307)
+- Remove MacOS specific overrides, not required at nixos-25.05 by @ThetaSinner in [#341](https://github.com/holochain/kitsune2/pull/341)
+- Upgrade to Rust 1.88 by @ThetaSinner
+- Upgrade tx5 to 0.7.1 by @ThetaSinner in [#306](https://github.com/holochain/kitsune2/pull/306)
+- Update to the latest tx5 release which includes a bugfix for handling p2p connection setup failures by @ThetaSinner in [#296](https://github.com/holochain/kitsune2/pull/296)
+- Allow a dedicated override for `OpId` by @ThetaSinner in [#279](https://github.com/holochain/kitsune2/pull/279)
+- Downgrade "no peers" gossip tracing messages from info to debug because they're too noisy when no other peers are available on the network by @ThetaSinner in [#276](https://github.com/holochain/kitsune2/pull/276)
+- Expose new module configuration for the tx5 transport `danger_force_signal_relay` by @ThetaSinner in [#270](https://github.com/holochain/kitsune2/pull/270)
+- Update tx5 to 0.5.0 by @ThetaSinner
+
+### Build System
+
+- Speed up tests by running them once by @ThetaSinner
+
+### CI
+
+- Use `info` log level while running tests on CI to reduce the noise of the default `debug` level by @ThetaSinner in [#356](https://github.com/holochain/kitsune2/pull/356)
+
+### Testing
+
+- *(kitsune2_core)* Add a new test that preflight messages are send and received before other messages by @ThetaSinner in [#330](https://github.com/holochain/kitsune2/pull/330)
+- Fix flaky `preflight_send_recv` test by @ThetaSinner in [#358](https://github.com/holochain/kitsune2/pull/358)
+- Improve flaky `two_node_gossip` test by @ThetaSinner in [#357](https://github.com/holochain/kitsune2/pull/357)
+- Purge state when request_ops fails by @jost-s
+- Add test for when a tie-breaker check results in a tie by @cdunster in [#292](https://github.com/holochain/kitsune2/pull/292)
+- Give test `two_node_gossip` more time to sync on CI by @ThetaSinner in [#308](https://github.com/holochain/kitsune2/pull/308)
+- Attempt to make `two_new_agents_sync` less flaky on macos on CI by @ThetaSinner
+
+### Refactor
+
+- Remove tx5 test-utils dependency from kitsune crate (#349) by @matthme in [#349](https://github.com/holochain/kitsune2/pull/349)
+- Remove re-insertion-logic from outgoing request in fetch module by @jost-s
+- Make preflight handlers async (#326) by @matthme in [#326](https://github.com/holochain/kitsune2/pull/326)
+- Clearer namings and more docs for the MemTransport (#323) by @matthme in [#323](https://github.com/holochain/kitsune2/pull/323)
+- Extract block targets in tests into constants by @cdunster in [#290](https://github.com/holochain/kitsune2/pull/290)
+- \[**BREAKING**\] Rename space to space_id for clarity where applicable (#273) by @matthme in [#273](https://github.com/holochain/kitsune2/pull/273)
+
+### Styling
+
+- Clean up imports in test module by @cdunster
+
+### Documentation
+
+- Remove mention of re-insertion from docs by @jost-s
+- Update PeerStore::insert doc-comment to mention blocks by @cdunster
+
+### Automated Changes
+
+- *(deps)* Bump holochain/actions from 1.1.0 to 1.3.0 by @dependabot[bot] in [#337](https://github.com/holochain/kitsune2/pull/337)
+- *(deps)* Bump actions/setup-go from 5 to 6 by @dependabot[bot] in [#332](https://github.com/holochain/kitsune2/pull/332)
+- *(deps)* Bump actions/checkout from 4 to 5 by @dependabot[bot] in [#299](https://github.com/holochain/kitsune2/pull/299)
+
+### First-time Contributors
+
+- @pdaoust made their first contribution in [#336](https://github.com/holochain/kitsune2/pull/336)
+
+
+## \[[0.3.0-dev.4](https://github.com/holochain/kitsune2/compare/v0.3.0-dev.3...v0.3.0-dev.4)\] - 2025-10-09
+
+### Features
+
+- Bare-bones Docusaurus site with kitsune2 styling (#336) by @pdaoust in [#336](https://github.com/holochain/kitsune2/pull/336)
+- Notify drained queue listeners when sending fetch request fails by @jost-s in [#338](https://github.com/holochain/kitsune2/pull/338)
+- Check if agents are blocked when receiving a message (#320) by @matthme in [#320](https://github.com/holochain/kitsune2/pull/320)
+- Add counter for blocked messages to the Transport trait (#335) by @matthme in [#335](https://github.com/holochain/kitsune2/pull/335)
+
+### Bug Fixes
+
+- Remove requests from state if they could not be sent to queue by @jost-s
+
+### Miscellaneous Tasks
+
+- Remove MacOS specific overrides, not required at nixos-25.05 by @ThetaSinner in [#341](https://github.com/holochain/kitsune2/pull/341)
+- Upgrade to Rust 1.88 by @ThetaSinner
+
+### Testing
+
+- Purge state when request_ops fails by @jost-s
+
+### Refactor
+
+- Remove re-insertion-logic from outgoing request in fetch module by @jost-s
+
+### Documentation
+
+- Remove mention of re-insertion from docs by @jost-s
+
+### Automated Changes
+
+- *(deps)* Bump holochain/actions from 1.1.0 to 1.3.0 by @dependabot[bot] in [#337](https://github.com/holochain/kitsune2/pull/337)
+  - Bumps [holochain/actions](https://github.com/holochain/actions) from 1.1.0 to 1.3.0. - [Release notes](https://github.com/holochain/actions/releases) - [Commits](https://github.com/holochain/actions/compare/v1.1.0...v1.3.0)
+  - Updated-dependencies: - dependency-name: holochain/actions   dependency-version: 1.3.0   dependency-type: direct:production   update-type: version-update:semver-minor ...
+- *(deps)* Bump actions/setup-go from 5 to 6 by @dependabot[bot] in [#332](https://github.com/holochain/kitsune2/pull/332)
+  - Bumps [actions/setup-go](https://github.com/actions/setup-go) from 5 to 6. - [Release notes](https://github.com/actions/setup-go/releases) - [Commits](https://github.com/actions/setup-go/compare/v5...v6)
+  - Updated-dependencies: - dependency-name: actions/setup-go   dependency-version: '6'   dependency-type: direct:production   update-type: version-update:semver-major ...
+
+### First-time Contributors
+
+- @pdaoust made their first contribution in [#336](https://github.com/holochain/kitsune2/pull/336)
+
+## \[[0.3.0-dev.3](https://github.com/holochain/kitsune2/compare/v0.3.0-dev.2...v0.3.0-dev.3)\] - 2025-09-11
+
+### Features
+
+- \[**BREAKING**\] Add report module with fetched op api and no-op core report module by @neonphog
+
+### Bug Fixes
+
+- *(kitsune2_core)* Fix an issue in the `MemTransport` that allowed notify and module messages to be sent before the preflight exchange was complete by @ThetaSinner
+- \[**BREAKING**\] Remove as_any from report trait by @neonphog in [#331](https://github.com/holochain/kitsune2/pull/331)
+
+### Testing
+
+- *(kitsune2_core)* Add a new test that preflight messages are send and received before other messages by @ThetaSinner in [#330](https://github.com/holochain/kitsune2/pull/330)
+
+### Doc
+
+- Update crates/api/src/report.rs by @neonphog
+
+## \[[0.3.0-dev.2](https://github.com/holochain/kitsune2/compare/v0.3.0-dev.1...v0.3.0-dev.2)\] - 2025-09-03
+
+### Features
+
+- Upgrade tx5 to 0.8 by @ThetaSinner in [#322](https://github.com/holochain/kitsune2/pull/322)
+- Support the go-pion backend for tx5 as an optional configuration by @ThetaSinner in [#301](https://github.com/holochain/kitsune2/pull/301)
+- Make MemPeerStore inner insert method async by @cdunster
+- Use async Mutex for MemPeerStore inner by @cdunster
+- Add blocks module to the Space module by @cdunster
+- Add method to PeerStore to get agents by peer URL by @cdunster
+- Add common function to remove and block an agent by ID by @cdunster
+- Check if agents are blocked before inserting into peer_store by @cdunster
+- PeerStoreFactory::create now takes a DynBlocks by @cdunster
+- Add in-memory blocks implementation as default Blocks by @cdunster
+- Add mem_blocks module to implement Blocks and BlocksFactory by @cdunster
+  - This is an in-memory implementation to be used for testing only.
+- Add blocks factory to blocks module in API crate by @cdunster
+- Add blocks module to API crate by @cdunster
+- Add method to remove peer from peer_store based on AgentId by @cdunster
+
+### Bug Fixes
+
+- When an empty target list was passed to MemBlocks::are_all_blocked() it incorrectly returned true (#321) by @matthme in [#321](https://github.com/holochain/kitsune2/pull/321)
+- Use default-features = false for transport dependencies by @ThetaSinner in [#314](https://github.com/holochain/kitsune2/pull/314)
+- Increase default re-insert delay for fetch requests by @ThetaSinner in [#317](https://github.com/holochain/kitsune2/pull/317)
+  - This should improve performance because the fast fetch retry could spam the target before they get a chance to respond
+- Ensure the gossip initiate loop will always progress even if the fetch queue does not notify it by @ThetaSinner in [#304](https://github.com/holochain/kitsune2/pull/304)
+- Fetch should not error when too many messages have been received by @ThetaSinner in [#305](https://github.com/holochain/kitsune2/pull/305)
+  - Instead, fetch should just handle as many messages as it is willing to and drop messages that it can't respond to. The remote peers whose requests fail will just have to try again.
+- Close connections when marking a peer unresponsive by @ThetaSinner in [#303](https://github.com/holochain/kitsune2/pull/303)
+- Out of bounds panic in the DHT time module caused by a wrong bounds check by @ThetaSinner in [#285](https://github.com/holochain/kitsune2/pull/285)
+- Revert renaming of space field in AgentInfo (#278) by @matthme in [#278](https://github.com/holochain/kitsune2/pull/278)
+
+### Miscellaneous Tasks
+
+- *(kitsune2_core)* Add more tracing for prune and insert operations by @ThetaSinner
+- *(kitsune2_gossip)* Downgrade some common tracing logs from info to debug level to reduce noise in logs by @ThetaSinner in [#307](https://github.com/holochain/kitsune2/pull/307)
+- Upgrade tx5 to 0.7.1 by @ThetaSinner in [#306](https://github.com/holochain/kitsune2/pull/306)
+- Update to the latest tx5 release which includes a bugfix for handling p2p connection setup failures by @ThetaSinner in [#296](https://github.com/holochain/kitsune2/pull/296)
+- Allow a dedicated override for `OpId` by @ThetaSinner in [#279](https://github.com/holochain/kitsune2/pull/279)
+- Downgrade "no peers" gossip tracing messages from info to debug because they're too noisy when no other peers are available on the network by @ThetaSinner in [#276](https://github.com/holochain/kitsune2/pull/276)
+
+### Testing
+
+- Add test for when a tie-breaker check results in a tie by @cdunster in [#292](https://github.com/holochain/kitsune2/pull/292)
+- Give test `two_node_gossip` more time to sync on CI by @ThetaSinner in [#308](https://github.com/holochain/kitsune2/pull/308)
+- Attempt to make `two_new_agents_sync` less flaky on macos on CI by @ThetaSinner
+
+### Refactor
+
+- Make preflight handlers async (#326) by @matthme in [#326](https://github.com/holochain/kitsune2/pull/326)
+- Clearer namings and more docs for the MemTransport (#323) by @matthme in [#323](https://github.com/holochain/kitsune2/pull/323)
+- Extract block targets in tests into constants by @cdunster in [#290](https://github.com/holochain/kitsune2/pull/290)
+- \[**BREAKING**\] Rename space to space_id for clarity where applicable (#273) by @matthme in [#273](https://github.com/holochain/kitsune2/pull/273)
+
+### Styling
+
+- Clean up imports in test module by @cdunster
+
+### Documentation
+
+- Update PeerStore::insert doc-comment to mention blocks by @cdunster
+
+### Automated Changes
+
+- *(deps)* Bump actions/checkout from 4 to 5 by @dependabot[bot] in [#299](https://github.com/holochain/kitsune2/pull/299)
+  - Bumps [actions/checkout](https://github.com/actions/checkout) from 4 to 5. - [Release notes](https://github.com/actions/checkout/releases) - [Changelog](https://github.com/actions/checkout/blob/main/CHANGELOG.md) - [Commits](https://github.com/actions/checkout/compare/v4...v5)
+  - Updated-dependencies: - dependency-name: actions/checkout   dependency-version: '5'   dependency-type: direct:production   update-type: version-update:semver-major ...
 
 ## [0.3.0-dev.1] - 2025-07-24
 

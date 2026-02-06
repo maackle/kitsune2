@@ -1,9 +1,15 @@
 //! Kitsune2 transport related types.
 
 use crate::{protocol::*, *};
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
+
+type SpaceMap = Arc<Mutex<HashMap<SpaceId, DynTxSpaceHandler>>>;
+type ModMap = Arc<Mutex<HashMap<(SpaceId, String), DynTxModuleHandler>>>;
+type MessageBlocksMap =
+    Arc<Mutex<HashMap<Url, HashMap<SpaceId, MessageBlockCount>>>>;
 
 /// This is the low-level backend transport handler designed to work
 /// with [DefaultTransport].
@@ -12,8 +18,9 @@ use std::sync::{Arc, Mutex, Weak};
 /// from the [TransportFactory].
 pub struct TxImpHnd {
     handler: DynTxHandler,
-    space_map: Arc<Mutex<HashMap<SpaceId, DynTxSpaceHandler>>>,
-    mod_map: Arc<Mutex<HashMap<(SpaceId, String), DynTxModuleHandler>>>,
+    space_map: SpaceMap,
+    mod_map: ModMap,
+    blocked_message_counts: MessageBlocksMap,
 }
 
 impl TxImpHnd {
@@ -25,6 +32,7 @@ impl TxImpHnd {
             handler,
             space_map: Arc::new(Mutex::new(HashMap::new())),
             mod_map: Arc::new(Mutex::new(HashMap::new())),
+            blocked_message_counts: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -55,23 +63,29 @@ impl TxImpHnd {
     /// On success, this function returns bytes that should be
     /// sent as a preflight message for additional connection validation.
     /// (The preflight data should be sent even if it is zero length).
-    pub fn peer_connect(&self, peer: Url) -> K2Result<bytes::Bytes> {
-        for mod_handler in self.mod_map.lock().unwrap().values() {
-            mod_handler.peer_connect(peer.clone())?;
-        }
-        for space_handler in self.space_map.lock().unwrap().values() {
-            space_handler.peer_connect(peer.clone())?;
-        }
-        self.handler.peer_connect(peer.clone())?;
-        let preflight = self.handler.preflight_gather_outgoing(peer)?;
-        let enc = (K2Proto {
-            ty: K2WireType::Preflight as i32,
-            data: preflight,
-            space_id: None,
-            module_id: None,
+    pub fn peer_connect(
+        &self,
+        peer: Url,
+    ) -> BoxFut<'_, K2Result<bytes::Bytes>> {
+        Box::pin(async {
+            for mod_handler in self.mod_map.lock().unwrap().values() {
+                mod_handler.peer_connect(peer.clone())?;
+            }
+            for space_handler in self.space_map.lock().unwrap().values() {
+                space_handler.peer_connect(peer.clone())?;
+            }
+            self.handler.peer_connect(peer.clone())?;
+            let preflight =
+                self.handler.preflight_gather_outgoing(peer).await?;
+            let enc = (K2Proto {
+                ty: K2WireType::Preflight as i32,
+                data: preflight,
+                space_id: None,
+                module_id: None,
+            })
+            .encode()?;
+            Ok(enc)
         })
-        .encode()?;
-        Ok(enc)
     }
 
     /// Call this whenever a connection is closed.
@@ -86,53 +100,89 @@ impl TxImpHnd {
     }
 
     /// Call this whenever data is received on an open connection.
-    pub fn recv_data(&self, peer: Url, data: bytes::Bytes) -> K2Result<()> {
-        let data = K2Proto::decode(&data)?;
-        let ty = data.ty();
-        let K2Proto {
-            space_id,
-            module_id,
-            data,
-            ..
-        } = data;
+    pub fn recv_data(
+        &self,
+        peer: Url,
+        data: bytes::Bytes,
+    ) -> BoxFut<'_, K2Result<()>> {
+        Box::pin(async move {
+            let data = K2Proto::decode(&data)?;
+            let message_type = data.ty();
+            let K2Proto {
+                space_id,
+                module_id,
+                data,
+                ..
+            } = data;
 
-        match ty {
-            K2WireType::Unspecified => Ok(()),
-            K2WireType::Preflight => {
-                self.handler.preflight_validate_incoming(peer, data)
+            // Except for preflight, unspecified and disconnect messages we
+            // should drop messages if any agent is blocked for the given
+            // peer URL and space id. We do not close the connection because
+            // agents in other spaces may not be blocked on the same kitsune
+            // instance.
+            let start = std::time::Instant::now();
+            if !self.check_message_permitted(
+                &peer,
+                &space_id,
+                &module_id,
+                &message_type,
+            )? {
+                let elapsed = start.elapsed();
+                tracing::debug!(
+                    ?peer,
+                    "Checked message not permitted in {:?}",
+                    elapsed
+                );
+                return Ok(());
             }
-            K2WireType::Notify => {
-                if let Some(space_id) = space_id {
-                    let space_id = SpaceId::from(space_id);
-                    if let Some(h) =
-                        self.space_map.lock().unwrap().get(&space_id)
-                    {
-                        h.recv_space_notify(peer, space_id, data)?;
-                    }
+
+            let elapsed = start.elapsed();
+            tracing::debug!(
+                ?peer,
+                "Checked message permitted in {:?}",
+                elapsed
+            );
+
+            match message_type {
+                K2WireType::Unspecified => Ok(()),
+                K2WireType::Preflight => {
+                    self.handler.preflight_validate_incoming(peer, data).await
                 }
-                Ok(())
-            }
-            K2WireType::Module => {
-                if let (Some(space_id), Some(module)) = (space_id, module_id) {
-                    let space_id = SpaceId::from(space_id);
-                    if let Some(h) = self
-                        .mod_map
-                        .lock()
-                        .unwrap()
-                        .get(&(space_id.clone(), module.clone()))
+                K2WireType::Notify => {
+                    if let Some(space_id) = space_id {
+                        let space_id = SpaceId::from(space_id);
+                        if let Some(h) =
+                            self.space_map.lock().unwrap().get(&space_id)
+                        {
+                            h.recv_space_notify(peer, space_id, data)?;
+                        }
+                    }
+                    Ok(())
+                }
+                K2WireType::Module => {
+                    if let (Some(space_id), Some(module)) =
+                        (space_id, module_id)
                     {
-                        h.recv_module_msg(peer, space_id, module.clone(), data).inspect_err(|e| {
+                        let space_id = SpaceId::from(space_id);
+                        if let Some(h) = self
+                            .mod_map
+                            .lock()
+                            .unwrap()
+                            .get(&(space_id.clone(), module.clone()))
+                        {
+                            h.recv_module_msg(peer, space_id, module.clone(), data).inspect_err(|e| {
                             tracing::warn!(?module, "Error in recv_module_msg, peer connection will be closed: {e}");
                         })?;
+                        }
                     }
+                    Ok(())
                 }
-                Ok(())
+                K2WireType::Disconnect => {
+                    let reason = String::from_utf8_lossy(&data).to_string();
+                    Err(K2Error::other(format!("Remote Disconnect: {reason}")))
+                }
             }
-            K2WireType::Disconnect => {
-                let reason = String::from_utf8_lossy(&data).to_string();
-                Err(K2Error::other(format!("Remote Disconnect: {reason}")))
-            }
-        }
+        })
     }
 
     /// Call this whenever a connection to a peer fails to get established,
@@ -155,6 +205,75 @@ impl TxImpHnd {
             Ok(())
         })
     }
+
+    /// Check whether a message is permitted for a given peer and space
+    ///
+    /// If any agent associated with the given peer and space id is blocked
+    /// and the message is not of one of the explicitly allowed message types,
+    /// this function will return false and increase the count of blocked
+    /// messages by one.
+    pub fn check_message_permitted(
+        &self,
+        peer_url: &Url,
+        space_id: &Option<Bytes>,
+        module_id: &Option<String>,
+        message_type: &K2WireType,
+    ) -> K2Result<bool> {
+        // We accept the following messages also for peers at whose url all
+        // agents are blocked:
+        //
+        // - Preflight: Such that we can discover any new agent infos available
+        //   at that peer URL (agent infos are sent via preflight messages and
+        //   a blocked agent cannot gossip, so we couldn't otherwise reliably
+        //    learn about new agents at a peer URL).
+        // - Unspecified: We allow unspecified messages in order to ensure that
+        //   we're not constraining us with regards to updates in the
+        //   networking protocol. And since we ignore unspecified messages
+        //   anyway, we wouldn't gain much from blocking.
+        // - Disconnect: If we receive a Disconnect message, we disconnect
+        //   anyway and a disconnect message also wouldn't include a space id
+        //   for which we could check for blocked agents.
+        if matches!(
+            message_type,
+            K2WireType::Preflight
+                | K2WireType::Unspecified
+                | K2WireType::Disconnect
+        ) {
+            return Ok(true);
+        }
+
+        // If a space id was not provided, we reject the message and return
+        // an error, which will cause the connection to be closed.
+        //
+        // Since both notify and module messages are scoped to a space and
+        // therefore require a space id, a missing space id indicates that
+        // the remote kitsune instance is not following the protocol and must
+        // have been modified. Therefore none of the agents on that kitsune
+        // instance should be trusted.
+        //
+        // NOTE: This logic may need to be modified, if at a later point
+        // a new message type gets introduced that is not scoped to a space
+        // but does need to undergo a (in that case not space-scoped) check
+        // for blocks.
+        let space_id = match space_id {
+            None => {
+                tracing::warn!(?peer_url, "Received a message of type {:?} without space id which is violating the protocol. Dropping the message and closing the connection.", message_type);
+                return Err(K2Error::other(
+                    "Received a message without space id.",
+                ));
+            }
+            Some(id) => SpaceId::from(id.clone()),
+        };
+        let is_blocked = is_peer_blocked(
+            self.space_map.clone(),
+            self.blocked_message_counts.clone(),
+            peer_url,
+            &space_id,
+            module_id,
+            false,
+        )?;
+        Ok(!is_blocked)
+    }
 }
 
 impl std::fmt::Debug for TxImpHnd {
@@ -163,6 +282,116 @@ impl std::fmt::Debug for TxImpHnd {
     }
 }
 
+/// Check whether any agent associated with the given peer url is blocked
+/// for a space and increase the message blocks count by one if they are.
+fn is_peer_blocked(
+    space_map: SpaceMap,
+    message_blocks_map: MessageBlocksMap,
+    peer_url: &Url,
+    space_id: &SpaceId,
+    module_id: &Option<String>,
+    outgoing: bool,
+) -> K2Result<bool> {
+    let space_handler =
+        space_map.lock().expect("poisoned").get(space_id).cloned();
+    match space_handler {
+        Some(space_handler) => {
+            let all_blocked = space_handler.is_any_agent_at_url_blocked(peer_url).inspect_err(|e| tracing::warn!(?space_id, ?peer_url, ?module_id, "Failed to check whether any agent is blocked, peer connection will be closed: {e}"))?;
+            if all_blocked {
+                tracing::debug!(
+                    ?space_id,
+                    ?peer_url,
+                    ?module_id,
+                    "At least one agent at peer is blocked, message will be dropped."
+                );
+                if outgoing {
+                    incr_blocked_message_count_outgoing(
+                        message_blocks_map,
+                        peer_url.clone(),
+                        space_id,
+                    );
+                } else {
+                    incr_blocked_message_count_incoming(
+                        message_blocks_map,
+                        peer_url.clone(),
+                        space_id,
+                    );
+                }
+                return Ok(true);
+            }
+            Ok(false)
+        }
+        None => {
+            tracing::error!(
+                ?space_id,
+                ?peer_url,
+                ?module_id,
+                "No space handler found. Message will be dropped."
+            );
+            Ok(true)
+        }
+    }
+}
+
+fn incr_blocked_message_count_incoming(
+    message_blocks_map: MessageBlocksMap,
+    peer_url: Url,
+    space_id: &SpaceId,
+) {
+    let mut blocked_message_counts =
+        message_blocks_map.lock().expect("poisoned");
+    blocked_message_counts
+        .entry(peer_url)
+        .and_modify(|space_counts| {
+            space_counts
+                .entry(space_id.clone())
+                .and_modify(|c| c.incoming += 1)
+                .or_insert(MessageBlockCount {
+                    incoming: 1,
+                    outgoing: 0,
+                });
+        })
+        .or_insert(
+            [(
+                space_id.clone(),
+                MessageBlockCount {
+                    incoming: 1,
+                    outgoing: 0,
+                },
+            )]
+            .into(),
+        );
+}
+
+fn incr_blocked_message_count_outgoing(
+    message_blocks_map: MessageBlocksMap,
+    peer_url: Url,
+    space_id: &SpaceId,
+) {
+    let mut blocked_message_counts =
+        message_blocks_map.lock().expect("poisoned");
+    blocked_message_counts
+        .entry(peer_url)
+        .and_modify(|space_counts| {
+            space_counts
+                .entry(space_id.clone())
+                .and_modify(|c| c.outgoing += 1)
+                .or_insert(MessageBlockCount {
+                    incoming: 0,
+                    outgoing: 1,
+                });
+        })
+        .or_insert(
+            [(
+                space_id.clone(),
+                MessageBlockCount {
+                    incoming: 0,
+                    outgoing: 1,
+                },
+            )]
+            .into(),
+        );
+}
 /// A low-level transport implementation.
 pub trait TxImp: 'static + Send + Sync + std::fmt::Debug {
     /// Get the current url if any.
@@ -256,7 +485,7 @@ pub trait Transport: 'static + Send + Sync + std::fmt::Debug {
     fn unregister_space(&self, space_id: SpaceId) -> BoxFut<'_, ()>;
 
     /// Dump network stats.
-    fn dump_network_stats(&self) -> BoxFut<'_, K2Result<TransportStats>>;
+    fn dump_network_stats(&self) -> BoxFut<'_, K2Result<ApiTransportStats>>;
 }
 
 /// Trait-object [Transport].
@@ -275,8 +504,9 @@ pub type WeakDynTransport = Weak<dyn Transport>;
 #[derive(Clone, Debug)]
 pub struct DefaultTransport {
     imp: DynTxImp,
-    space_map: Arc<Mutex<HashMap<SpaceId, DynTxSpaceHandler>>>,
-    mod_map: Arc<Mutex<HashMap<(SpaceId, String), DynTxModuleHandler>>>,
+    space_map: SpaceMap,
+    mod_map: ModMap,
+    blocked_message_counts: MessageBlocksMap,
 }
 
 impl DefaultTransport {
@@ -290,6 +520,7 @@ impl DefaultTransport {
             imp,
             space_map: hnd.space_map.clone(),
             mod_map: hnd.mod_map.clone(),
+            blocked_message_counts: hnd.blocked_message_counts.clone(),
         });
         out
     }
@@ -351,11 +582,26 @@ impl Transport for DefaultTransport {
 
     fn send_space_notify(
         &self,
-        peer: Url,
+        peer_url: Url,
         space_id: SpaceId,
         data: bytes::Bytes,
     ) -> BoxFut<'_, K2Result<()>> {
         Box::pin(async move {
+            if is_peer_blocked(
+                self.space_map.clone(),
+                self.blocked_message_counts.clone(),
+                &peer_url,
+                &space_id,
+                &None,
+                true,
+            )? {
+                tracing::warn!(
+                    ?peer_url,
+                    ?space_id,
+                    "Attempted to send space notify message to a peer that is blocked in that space. Dropping message."
+                );
+                return Ok(());
+            }
             let enc = (K2Proto {
                 ty: K2WireType::Notify as i32,
                 data,
@@ -363,18 +609,34 @@ impl Transport for DefaultTransport {
                 module_id: None,
             })
             .encode()?;
-            self.imp.send(peer, enc).await
+            self.imp.send(peer_url, enc).await
         })
     }
 
     fn send_module(
         &self,
-        peer: Url,
+        peer_url: Url,
         space_id: SpaceId,
         module: String,
         data: bytes::Bytes,
     ) -> BoxFut<'_, K2Result<()>> {
         Box::pin(async move {
+            if is_peer_blocked(
+                self.space_map.clone(),
+                self.blocked_message_counts.clone(),
+                &peer_url,
+                &space_id,
+                &None,
+                true,
+            )? {
+                tracing::warn!(
+                    ?peer_url,
+                    ?space_id,
+                    ?module,
+                    "Attempted to send module message to a peer that is blocked in the associated space. Dropping message."
+                );
+                return Ok(());
+            }
             let enc = (K2Proto {
                 ty: K2WireType::Module as i32,
                 data,
@@ -382,7 +644,7 @@ impl Transport for DefaultTransport {
                 module_id: Some(module),
             })
             .encode()?;
-            self.imp.send(peer, enc).await
+            self.imp.send(peer_url, enc).await
         })
     }
 
@@ -404,8 +666,16 @@ impl Transport for DefaultTransport {
         })
     }
 
-    fn dump_network_stats(&self) -> BoxFut<'_, K2Result<TransportStats>> {
-        self.imp.dump_network_stats()
+    fn dump_network_stats(&self) -> BoxFut<'_, K2Result<ApiTransportStats>> {
+        Box::pin(async {
+            let low_level_stats = self.imp.dump_network_stats().await?;
+            let blocked_message_counts =
+                self.blocked_message_counts.lock().expect("poisoned");
+            Ok(ApiTransportStats {
+                transport_stats: low_level_stats,
+                blocked_message_counts: blocked_message_counts.clone(),
+            })
+        })
     }
 }
 
@@ -443,9 +713,9 @@ pub trait TxHandler: TxBaseHandler {
     fn preflight_gather_outgoing(
         &self,
         peer_url: Url,
-    ) -> K2Result<bytes::Bytes> {
+    ) -> BoxFut<'_, K2Result<bytes::Bytes>> {
         drop(peer_url);
-        Ok(bytes::Bytes::new())
+        Box::pin(async { Ok(bytes::Bytes::new()) })
     }
 
     /// Validate preflight data sent by a remote peer on a new connection.
@@ -457,9 +727,9 @@ pub trait TxHandler: TxBaseHandler {
         &self,
         peer_url: Url,
         data: bytes::Bytes,
-    ) -> K2Result<()> {
+    ) -> BoxFut<'_, K2Result<()>> {
         drop((peer_url, data));
-        Ok(())
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -490,6 +760,9 @@ pub trait TxSpaceHandler: TxBaseHandler {
         drop((peer, when));
         Box::pin(async move { Ok(()) })
     }
+
+    /// Return `true` if any agent using the passed peer [`Url`] is blocked.
+    fn is_any_agent_at_url_blocked(&self, peer_url: &Url) -> K2Result<bool>;
 }
 
 /// Trait-object [TxSpaceHandler].
@@ -522,6 +795,9 @@ pub trait TransportFactory: 'static + Send + Sync + std::fmt::Debug {
     fn default_config(&self, config: &mut config::Config) -> K2Result<()>;
 
     /// Validate configuration.
+    ///
+    /// The implementation should check only for values which are set and mandatory at first,
+    /// while missing values that can be provided later, such as during space creation, should be ignored.
     fn validate_config(&self, config: &config::Config) -> K2Result<()>;
 
     /// Construct a transport instance.
@@ -534,6 +810,27 @@ pub trait TransportFactory: 'static + Send + Sync + std::fmt::Debug {
 
 /// Trait-object [TransportFactory].
 pub type DynTransportFactory = Arc<dyn TransportFactory>;
+
+/// A count for incoming and outgoing blocked messages.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MessageBlockCount {
+    /// Count of incoming messages that have been blocked and dropped.
+    pub incoming: u32,
+
+    /// Count of outgoing messages that have been blocked and dropped.
+    pub outgoing: u32,
+}
+
+/// Extended transport stats exposed via the API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiTransportStats {
+    /// Stats from the configured transport implementation.
+    pub transport_stats: TransportStats,
+
+    /// Blocked message counts.
+    pub blocked_message_counts:
+        HashMap<Url, HashMap<SpaceId, MessageBlockCount>>,
+}
 
 /// Stats for a transport connection.
 ///
@@ -571,6 +868,6 @@ pub struct TransportConnectionStats {
     /// UNIX epoch timestamp in seconds when this connection was opened.
     pub opened_at_s: u64,
 
-    /// True if this connection has successfully upgraded to webrtc.
-    pub is_webrtc: bool,
+    /// True if this connection has successfully upgraded to a direct peer connection.
+    pub is_direct: bool,
 }

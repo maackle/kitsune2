@@ -18,6 +18,18 @@ use kitsune2_core::{
     Ed25519Verifier,
 };
 use kitsune2_gossip::K2GossipFactory;
+#[cfg(all(
+    not(feature = "transport-tx5-backend-libdatachannel"),
+    not(feature = "transport-tx5-backend-go-pion"),
+    not(feature = "transport-tx5-datachannel-vendored"),
+    feature = "transport-iroh"
+))]
+use kitsune2_transport_iroh::IrohTransportFactory;
+#[cfg(any(
+    feature = "transport-tx5-backend-libdatachannel",
+    feature = "transport-tx5-backend-go-pion",
+    feature = "transport-tx5-datachannel-vendored"
+))]
 use kitsune2_transport_tx5::Tx5TransportFactory;
 
 /// Construct a default production builder for Kitsune2.
@@ -28,16 +40,17 @@ use kitsune2_transport_tx5::Tx5TransportFactory;
 /// - `peer_store` - The default peer store is [factories::MemPeerStoreFactory].
 /// - `bootstrap` - The default bootstrap is [factories::CoreBootstrapFactory].
 /// - `fetch` - The default fetch module is [factories::CoreFetchFactory].
+/// - `report` - The default report module is [factories::CoreReportFactory].
 /// - `transport` - The default transport is [Tx5TransportFactory].
 /// - `op_store` - The default op store is [MemOpStoreFactory].
-///                Note: you will likely want to implement your own op store.
+///   Note: you will likely want to implement your own op store.
 /// - `peer_meta_store` - The default peer meta store is [factories::MemPeerMetaStoreFactory].
-///                       Note: you will likely want to implement your own peer meta store.
+///   Note: you will likely want to implement your own peer meta store.
 /// - `gossip` - The default gossip module is [K2GossipFactory].
 /// - `local_agent_store` - The default local agent store is [factories::CoreLocalAgentStoreFactory].
 /// - `publish` - The default publish module is [factories::CorePublishFactory].
 /// - `blocks` - The default blocks module is [factories::MemBlocksFactory].
-///              Note: you will likely want to implement your own [`Blocks`] module.
+///   Note: you will likely want to implement your own [`Blocks`] module.
 pub fn default_builder() -> Builder {
     Builder {
         config: Config::default(),
@@ -48,7 +61,20 @@ pub fn default_builder() -> Builder {
         peer_store: factories::MemPeerStoreFactory::create(),
         bootstrap: factories::CoreBootstrapFactory::create(),
         fetch: factories::CoreFetchFactory::create(),
+        report: factories::CoreReportFactory::create(),
+        #[cfg(any(
+            feature = "transport-tx5-backend-libdatachannel",
+            feature = "transport-tx5-backend-go-pion",
+            feature = "transport-tx5-datachannel-vendored"
+        ))]
         transport: Tx5TransportFactory::create(),
+        #[cfg(all(
+            not(feature = "transport-tx5-backend-libdatachannel"),
+            not(feature = "transport-tx5-backend-go-pion"),
+            not(feature = "transport-tx5-datachannel-vendored"),
+            feature = "transport-iroh"
+        ))]
+        transport: IrohTransportFactory::create(),
         op_store: MemOpStoreFactory::create(),
         peer_meta_store: factories::MemPeerMetaStoreFactory::create(),
         gossip: K2GossipFactory::create(),

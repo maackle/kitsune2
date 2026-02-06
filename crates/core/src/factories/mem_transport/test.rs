@@ -1,4 +1,5 @@
 use kitsune2_api::*;
+use kitsune2_test_utils::enable_tracing;
 use kitsune2_test_utils::space::TEST_SPACE_ID;
 use std::sync::{Arc, Mutex};
 
@@ -9,6 +10,9 @@ enum Track {
     Disconnect(Url, Option<String>),
     SpaceRecv(Url, SpaceId, bytes::Bytes),
     ModRecv(Url, SpaceId, String, bytes::Bytes),
+    PreflightSend,
+    PreflightRecv,
+    AreBlocked(Url),
 }
 
 type G = Box<dyn Fn(Url) -> K2Result<bytes::Bytes> + 'static + Send + Sync>;
@@ -49,16 +53,18 @@ impl TxHandler for TrackHnd {
     fn preflight_gather_outgoing(
         &self,
         peer_url: Url,
-    ) -> K2Result<bytes::Bytes> {
-        (self.preflight_gather_outgoing)(peer_url)
+    ) -> BoxFut<'_, K2Result<bytes::Bytes>> {
+        self.track.lock().unwrap().push(Track::PreflightSend);
+        Box::pin(async { (self.preflight_gather_outgoing)(peer_url) })
     }
 
     fn preflight_validate_incoming(
         &self,
         peer_url: Url,
         data: bytes::Bytes,
-    ) -> K2Result<()> {
-        (self.preflight_validate_incoming)(peer_url, data)
+    ) -> BoxFut<'_, K2Result<()>> {
+        self.track.lock().unwrap().push(Track::PreflightRecv);
+        Box::pin(async { (self.preflight_validate_incoming)(peer_url, data) })
     }
 }
 
@@ -74,6 +80,15 @@ impl TxSpaceHandler for TrackHnd {
             .unwrap()
             .push(Track::SpaceRecv(peer, space_id, data));
         Ok(())
+    }
+
+    fn is_any_agent_at_url_blocked(&self, peer_url: &Url) -> K2Result<bool> {
+        self.track
+            .lock()
+            .unwrap()
+            .push(Track::AreBlocked(peer_url.clone()));
+
+        Ok(false)
     }
 }
 
@@ -197,6 +212,42 @@ impl TrackHnd {
             self.track.lock().unwrap(),
         )))
     }
+
+    pub fn check_preflight_before_other_messages(&self) {
+        let lock = self.track.lock().unwrap();
+        let preflight_index = std::cmp::max(
+            lock.iter()
+                .position(|t| matches!(t, Track::PreflightSend))
+                .expect("no preflight send"),
+            lock.iter()
+                .position(|t| matches!(t, Track::PreflightRecv))
+                .expect("no preflight recv"),
+        );
+        let message_index = std::cmp::min(
+            lock.iter()
+                .position(|t| matches!(t, Track::SpaceRecv(_, _, _))),
+            lock.iter()
+                .position(|t| matches!(t, Track::ModRecv(_, _, _, _))),
+        )
+        .expect("No messages found");
+
+        if preflight_index > message_index {
+            panic!("Preflight messages were not sent/received before other messages");
+        }
+    }
+
+    /// Check that is_any_agent_at_url_blocked() has been called on the
+    /// TxSpaceHandler
+    pub fn check_checked_for_blocks(&self, peer_url: &Url) -> K2Result<()> {
+        let track = self.track.lock().unwrap();
+        track
+            .iter()
+            .find(|t| matches!(t, Track::AreBlocked(url) if peer_url == url))
+            .ok_or(K2Error::other(format!(
+                "matching AreBlocked not found {peer_url}, out of {track:#?}"
+            )))?;
+        Ok(())
+    }
 }
 
 async fn gen_tx(hnd: DynTxHandler) -> DynTransport {
@@ -240,18 +291,24 @@ async fn transport_notify() {
     h2.check_connect(&u1).unwrap();
     h1.check_notify(&u2, &TEST_SPACE_ID, b"world").unwrap();
     h2.check_notify(&u1, &TEST_SPACE_ID, b"hello").unwrap();
+    h1.check_checked_for_blocks(&u2).unwrap();
+    h2.check_checked_for_blocks(&u1).unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn transport_module() {
+    enable_tracing();
+
     let h1 = TrackHnd::new();
     let t1 = gen_tx(h1.clone()).await;
     t1.register_module_handler(TEST_SPACE_ID, "test".into(), h1.clone());
+    t1.register_space_handler(TEST_SPACE_ID, h1.clone());
     let u1 = h1.url();
 
     let h2 = TrackHnd::new();
     let t2 = gen_tx(h2.clone()).await;
     t2.register_module_handler(TEST_SPACE_ID, "test".into(), h2.clone());
+    t2.register_space_handler(TEST_SPACE_ID, h2.clone());
     let u2 = h2.url();
 
     t1.send_module(
@@ -276,6 +333,8 @@ async fn transport_module() {
     h2.check_connect(&u1).unwrap();
     h1.check_mod(&u2, &TEST_SPACE_ID, "test", b"world").unwrap();
     h2.check_mod(&u1, &TEST_SPACE_ID, "test", b"hello").unwrap();
+    h1.check_checked_for_blocks(&u2).unwrap();
+    h2.check_checked_for_blocks(&u1).unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -303,9 +362,9 @@ async fn transport_disconnect() {
     let mut s1 = t1.dump_network_stats().await.unwrap();
     println!("before disconnect: {s1:#?}");
 
-    assert_eq!("kitsune2-core-mem", s1.backend);
-    assert!(!s1.connections.is_empty());
-    let c1 = s1.connections.remove(0);
+    assert_eq!("kitsune2-core-mem", s1.transport_stats.backend);
+    assert!(!s1.transport_stats.connections.is_empty());
+    let c1 = s1.transport_stats.connections.remove(0);
     assert!(c1.send_message_count > 0);
     assert!(c1.send_bytes > 0);
 
@@ -317,7 +376,7 @@ async fn transport_disconnect() {
     let s1 = t1.dump_network_stats().await.unwrap();
     println!("after disconnect: {s1:#?}");
 
-    assert!(s1.connections.is_empty());
+    assert!(s1.transport_stats.connections.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -335,10 +394,12 @@ async fn transport_preflight_happy() {
         }),
     );
 
-    let _t1 = gen_tx(h.clone()).await;
+    let t1 = gen_tx(h.clone()).await;
+    t1.register_space_handler(TEST_SPACE_ID, h.clone());
     let u = h.url();
 
     let t2 = gen_tx(h.clone()).await;
+    t2.register_space_handler(TEST_SPACE_ID, h.clone());
 
     t2.send_space_notify(u, TEST_SPACE_ID, bytes::Bytes::from_static(b"hello"))
         .await
@@ -367,9 +428,11 @@ async fn transport_preflight_reject() {
     );
 
     let t1 = gen_tx(h1.clone()).await;
+    t1.register_space_handler(TEST_SPACE_ID, h1.clone());
     let u1 = h1.url();
 
-    let _t2 = gen_tx(h2.clone()).await;
+    let t2 = gen_tx(h2.clone()).await;
+    t2.register_space_handler(TEST_SPACE_ID, h2.clone());
     let u2 = h2.url();
 
     t1.send_space_notify(
@@ -389,4 +452,56 @@ async fn transport_preflight_reject() {
     }
 
     panic!("expected disconnect in reasonable time");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn preflight_before_other() {
+    let h1 = TrackHnd::new();
+    let t1 = gen_tx(h1.clone()).await;
+    t1.register_space_handler(TEST_SPACE_ID, h1.clone());
+    t1.register_module_handler(TEST_SPACE_ID, "test".into(), h1.clone());
+    let u1 = h1.url();
+
+    let h2 = TrackHnd::new();
+    let t2 = gen_tx(h2.clone()).await;
+    t2.register_space_handler(TEST_SPACE_ID, h2.clone());
+    t2.register_module_handler(TEST_SPACE_ID, "test".into(), h2.clone());
+    let u2 = h2.url();
+
+    t1.send_space_notify(
+        u2.clone(),
+        TEST_SPACE_ID,
+        bytes::Bytes::from_static(b"hello"),
+    )
+    .await
+    .unwrap();
+
+    t2.send_space_notify(
+        u1.clone(),
+        TEST_SPACE_ID,
+        bytes::Bytes::from_static(b"world"),
+    )
+    .await
+    .unwrap();
+
+    t1.send_module(
+        u2.clone(),
+        TEST_SPACE_ID,
+        "test".into(),
+        bytes::Bytes::from_static(b"hello"),
+    )
+    .await
+    .unwrap();
+
+    t2.send_module(
+        u1.clone(),
+        TEST_SPACE_ID,
+        "test".into(),
+        bytes::Bytes::from_static(b"world"),
+    )
+    .await
+    .unwrap();
+
+    h1.check_preflight_before_other_messages();
+    h2.check_preflight_before_other_messages();
 }

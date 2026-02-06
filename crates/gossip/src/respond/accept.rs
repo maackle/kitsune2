@@ -99,6 +99,8 @@ impl K2Gossip {
                 // Then pick an appropriate response message based on the snapshot
                 match next_action {
                     DhtSnapshotNextAction::Identical => {
+                        tracing::debug!(?accept.session_id, "Snapshots identical, no diff needed");
+
                         if let Some(state) = lock.as_mut() {
                             state.stage = RoundStage::NoDiff;
                         }
@@ -237,9 +239,9 @@ impl K2Gossip {
                 state.validate_accept(from_peer.clone(), accept)?.clone()
             }
             None => {
-                return Err(K2GossipError::peer_behavior(
-                    "Unsolicited Accept message",
-                ));
+                return Err(K2GossipError::peer_behavior(format!(
+                    "Unsolicited Accept message from peer: {from_peer}",
+                )));
             }
         };
 
@@ -303,8 +305,7 @@ impl GossipRoundState {
                 Ok(stage)
             }
             stage => Err(K2GossipError::peer_behavior(format!(
-                "Unexpected round state for accept: Initiated != {:?}",
-                stage
+                "Unexpected round state for accept: Initiated != {stage:?}"
             ))),
         }
     }
@@ -430,7 +431,7 @@ mod tests {
         let no_diff = no_diff.unwrap();
         let no_diff = match no_diff {
             GossipMessage::NoDiff(accept) => accept,
-            _ => panic!("Expected a NoDiff message, got: {:?}", no_diff),
+            _ => panic!("Expected a NoDiff message, got: {no_diff:?}"),
         };
         let sent_ops =
             decode_ids::<OpId>(no_diff.accept_response.unwrap().new_ops);

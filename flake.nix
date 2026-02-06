@@ -2,7 +2,7 @@
   description = "Kitsune2 packages";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-24.11";
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-25.05";
     flake-parts.url = "github:hercules-ci/flake-parts";
     crane.url = "github:ipetkov/crane";
     rust-overlay = {
@@ -11,11 +11,24 @@
     };
   };
 
-  outputs = inputs@{ nixpkgs, flake-parts, crane, rust-overlay, ... }:
+  outputs =
+    inputs@{
+      nixpkgs,
+      flake-parts,
+      crane,
+      rust-overlay,
+      ...
+    }:
     flake-parts.lib.mkFlake { inherit inputs; } {
-      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
 
-      perSystem = { pkgs, system, ... }:
+      perSystem =
+        { pkgs, system, ... }:
         let
           rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
@@ -31,37 +44,44 @@
             ];
             buildInputs = [
               pkgs.openssl
-            ] ++ (pkgs.lib.optional (system == "x86_64-darwin") pkgs.apple-sdk_10_15);
+            ];
             doCheck = false;
           };
         in
         {
           # Override the per system packages to include the rust overlay
-          _module.args.pkgs = import nixpkgs { inherit system; overlays = [ (import rust-overlay) ]; };
+          _module.args.pkgs = import nixpkgs {
+            inherit system;
+            overlays = [ (import rust-overlay) ];
+          };
 
           packages = {
             inherit bootstrap-srv;
           };
 
-          devShells = {
-            default = pkgs.mkShell {
-              packages = with pkgs; [
-                rustup
+          devShells.default =
+            with pkgs;
+            let
+              # Use rust-overlay for a complete toolchain that works with nix
+              rustNightly = rust-bin.selectLatestNightlyWith (toolchain: toolchain.default);
+            in
+            mkShell {
+              packages = [
+                rust
+                rustNightly
                 cargo-make
                 taplo
                 perl
+                go
                 cmake
                 openssl
+                llvmPackages.clang
+                llvmPackages.libclang
               ];
 
-              LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
-
-              shellHook = ''
-                ${pkgs.rustup}/bin/rustup toolchain install ${rust.version}
-                ${pkgs.rustup}/bin/rustup toolchain install nightly
-              '';
+              LIBCLANG_PATH = "${lib.getLib llvmPackages.libclang}/lib";
+              CARGO_NIGHTLY = "${rustNightly}/bin/cargo";
             };
-          };
         };
     };
 }

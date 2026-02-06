@@ -4,6 +4,7 @@
 use base64::Engine;
 use kitsune2_api::*;
 use std::sync::Arc;
+use std::time::Duration;
 
 trait PeerUrlExt {
     fn to_kitsune(&self) -> K2Result<Url>;
@@ -60,9 +61,27 @@ pub mod config {
         /// The internal time in seconds to use as a maximum for operations,
         /// connecting, and idleing.
         ///
-        /// Default: 60s.
+        /// Default: 60 seconds.
         #[cfg_attr(feature = "schema", schemars(default))]
         pub timeout_s: u32,
+
+        /// The timeout for establishing a WebRTC connection to a peer.
+        ///
+        /// This value *must* be less than [`Tx5TransportConfig::timeout_s`], otherwise the connection attempt will
+        /// be treated as failed without attempting to fall back to the signal relay.
+        ///
+        /// A lower value for this timeout will make tx5 fall back to the signal relay faster. That
+        /// makes tx5 more responsive when direct connections are not possible. It also increases
+        /// the chance that connections end up being relayed unnecessarily when a direct connection
+        /// could have been established with a bit more time.
+        ///
+        /// The default of 45 seconds is a trade-off that gives WebRTC plenty of time to establish a
+        /// direct connection in most situations while still leaving some time for the signal relay to
+        /// be used within the overall timeout.
+        ///
+        /// Default: 45 seconds.
+        #[cfg_attr(feature = "schema", schemars(default))]
+        pub webrtc_connect_timeout_s: u32,
 
         /// WebRTC peer connection config.
         ///
@@ -105,6 +124,7 @@ pub mod config {
                 signal_allow_plain_text: false,
                 server_url: "<wss://your.sbd.url>".into(),
                 timeout_s: 60,
+                webrtc_connect_timeout_s: 45,
                 webrtc_config: WebRtcConfig {
                     ice_servers: vec![],
                     ice_transport_policy: Default::default(),
@@ -158,9 +178,17 @@ impl TransportFactory for Tx5TransportFactory {
 
         if !uses_tls && !config.tx5_transport.signal_allow_plain_text {
             return Err(K2Error::other(format!(
-                "disallowed plaintext signal url, either specify wss or set signal_allow_plain_text to true: {}",
-                sig,
+                "disallowed plaintext signal url, either specify wss or set signal_allow_plain_text to true: {sig}",
             )));
+        }
+
+        if config.tx5_transport.timeout_s
+            <= config.tx5_transport.webrtc_connect_timeout_s
+        {
+            return Err(K2Error::other(
+                "webrtc_connect_timeout_s must be less than timeout_s"
+                    .to_string(),
+            ));
         }
 
         Ok(())
@@ -231,10 +259,10 @@ impl Tx5Transport {
         let (pre_send, pre_recv) = tokio::sync::mpsc::channel::<PreCheck>(1024);
 
         let preflight_send_handler = handler.clone();
-        let tx5_config = Arc::new(tx5::Config {
-            signal_allow_plain_text: config.signal_allow_plain_text,
-            signal_auth_material: auth_material,
-            preflight: Some((
+
+        let mut tx5_config = tx5::Config::new()
+            .with_signal_allow_plain_text(config.signal_allow_plain_text)
+            .with_preflight(
                 Arc::new(move |peer_url| {
                     // gather any preflight data, and send to remote
                     let handler = preflight_send_handler.clone();
@@ -244,6 +272,7 @@ impl Tx5Transport {
                             peer_url.map_err(std::io::Error::other)?;
                         let data = handler
                             .peer_connect(peer_url)
+                            .await
                             .map_err(std::io::Error::other)?;
                         Ok(data.to_vec())
                     })
@@ -268,16 +297,23 @@ impl Tx5Transport {
                         })?
                     })
                 }),
-            )),
-            timeout: std::time::Duration::from_secs(config.timeout_s as u64),
-            backend_module: tx5::backend::BackendModule::LibDataChannel,
-            backend_module_config: Some(
-                tx5::backend::BackendModule::LibDataChannel.default_config(),
-            ),
-            initial_webrtc_config: config.webrtc_config,
-            danger_force_signal_relay: config.danger_force_signal_relay,
-            ..Default::default()
-        });
+            )
+            .with_timeout(Duration::from_secs(config.timeout_s as u64))
+            .with_webrtc_connect_timeout(Duration::from_secs(
+                config.webrtc_connect_timeout_s as u64,
+            ))
+            .with_backend_module_config(
+                tx5::backend::BackendModule::default().default_config(),
+            )
+            .with_initial_webrtc_config(config.webrtc_config);
+
+        if let Some(auth_material) = auth_material {
+            tx5_config = tx5_config.with_signal_auth_material(auth_material);
+        }
+
+        tx5_config.danger_force_signal_relay = config.danger_force_signal_relay;
+
+        let tx5_config = Arc::new(tx5_config);
 
         let (ep, ep_recv) = tx5::Endpoint::new(tx5_config);
         let ep = Arc::new(ep);
@@ -337,6 +373,7 @@ impl TxImp for Tx5Transport {
                     .handler
                     .set_unresponsive(peer.clone(), Timestamp::now())
                     .await;
+                self.ep.close(&peer.to_peer_url()?);
                 return Err(K2Error::other_src(
                     format!("tx5 send error to peer at url {peer}"),
                     e,
@@ -379,7 +416,7 @@ impl TxImp for Tx5Transport {
                         recv_message_count: conn.recv_message_count,
                         recv_bytes: conn.recv_bytes,
                         opened_at_s: conn.opened_at_s,
-                        is_webrtc: conn.is_webrtc,
+                        is_direct: conn.is_webrtc,
                     })
                     .collect(),
             })
@@ -391,19 +428,21 @@ fn handle_msg(
     handler: &TxImpHnd,
     peer_url: tx5::PeerUrl,
     message: Vec<u8>,
-) -> K2Result<()> {
-    let peer_url = match peer_url.to_kitsune() {
-        Ok(peer_url) => peer_url,
-        Err(err) => {
-            return Err(K2Error::other_src("malformed peer url", err));
+) -> BoxFut<'_, K2Result<()>> {
+    Box::pin(async move {
+        let peer_url = match peer_url.to_kitsune() {
+            Ok(peer_url) => peer_url,
+            Err(err) => {
+                return Err(K2Error::other_src("malformed peer url", err));
+            }
+        };
+        // this would be more efficient if we retool tx5 to use bytes internally
+        let message = bytes::BytesMut::from(message.as_slice()).freeze();
+        if let Err(err) = handler.recv_data(peer_url, message).await {
+            return Err(K2Error::other_src("error in recv data handler", err));
         }
-    };
-    // this would be more efficient if we retool tx5 to use bytes internally
-    let message = bytes::BytesMut::from(message.as_slice()).freeze();
-    if let Err(err) = handler.recv_data(peer_url, message) {
-        return Err(K2Error::other_src("error in recv data handler", err));
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 struct TaskDrop(&'static str);
@@ -419,6 +458,7 @@ async fn pre_task(handler: Arc<TxImpHnd>, mut pre_recv: PreCheckRecv) {
     while let Some((peer_url, message, resp)) = pre_recv.recv().await {
         let _ = resp.send(
             handle_msg(&handler, peer_url, message)
+                .await
                 .map_err(std::io::Error::other),
         );
     }
@@ -462,7 +502,7 @@ async fn evt_task(
             }
             Message { peer_url, message } => {
                 if let Err(err) =
-                    handle_msg(&handler, peer_url.clone(), message)
+                    handle_msg(&handler, peer_url.clone(), message).await
                 {
                     ep.close(&peer_url);
                     tracing::debug!(?err);

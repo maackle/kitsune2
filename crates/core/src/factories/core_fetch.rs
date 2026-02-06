@@ -5,7 +5,6 @@ use std::sync::MutexGuard;
 use std::{
     collections::HashSet,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 use tokio::{
     sync::mpsc::{channel, Receiver, Sender},
@@ -32,11 +31,6 @@ mod config {
         /// Default: 2.
         #[cfg_attr(feature = "schema", schemars(default))]
         pub parallel_request_count: u8,
-        /// Delay before re-inserting ops to request back into the outgoing request queue.
-        ///
-        /// Default: 2 s.
-        #[cfg_attr(feature = "schema", schemars(default))]
-        pub re_insert_outgoing_request_delay_ms: u32,
     }
 
     impl Default for CoreFetchConfig {
@@ -44,7 +38,6 @@ mod config {
         fn default() -> Self {
             Self {
                 parallel_request_count: 2,
-                re_insert_outgoing_request_delay_ms: 2000,
             }
         }
     }
@@ -86,6 +79,7 @@ impl FetchFactory for CoreFetchFactory {
         &self,
         builder: Arc<Builder>,
         space_id: SpaceId,
+        report: DynReport,
         op_store: DynOpStore,
         peer_meta_store: DynPeerMetaStore,
         transport: DynTransport,
@@ -96,6 +90,7 @@ impl FetchFactory for CoreFetchFactory {
             let out: DynFetch = Arc::new(CoreFetch::new(
                 config.core_fetch,
                 space_id,
+                report,
                 op_store,
                 peer_meta_store,
                 transport,
@@ -107,10 +102,12 @@ impl FetchFactory for CoreFetchFactory {
 
 type OutgoingRequest = (OpId, Url);
 type IncomingRequest = (Vec<OpId>, Url);
-type IncomingResponse = Vec<Op>;
+type IncomingResponse = (Vec<Op>, Url);
 
 #[derive(Debug)]
 struct State {
+    space_id: SpaceId,
+    report: DynReport,
     requests: HashSet<OutgoingRequest>,
     notify_when_drained_senders: Vec<futures::channel::oneshot::Sender<()>>,
 }
@@ -145,6 +142,7 @@ impl CoreFetch {
     fn new(
         config: CoreFetchConfig,
         space_id: SpaceId,
+        report: DynReport,
         op_store: DynOpStore,
         peer_meta_store: DynPeerMetaStore,
         transport: DynTransport,
@@ -152,6 +150,7 @@ impl CoreFetch {
         Self::spawn_tasks(
             config,
             space_id,
+            report,
             op_store,
             peer_meta_store,
             transport,
@@ -170,24 +169,32 @@ impl Fetch for CoreFetch {
             let new_op_ids =
                 self.op_store.filter_out_existing_ops(op_ids).await?;
 
-            // Add requests to set.
-            {
-                let requests = &mut self.state.lock().unwrap().requests;
-                requests.extend(
-                    new_op_ids
-                        .clone()
-                        .into_iter()
-                        .map(|op_id| (op_id.clone(), source.clone())),
-                );
-            }
+            // Add requests to state.
+            // These need to be added up front, before sending them to the outgoing
+            // request queue, otherwise the queue processes them faster than they're
+            // being added to state and the request logic fails.
+            self.state.lock().expect("poisoned").requests.extend(
+                new_op_ids
+                    .clone()
+                    .into_iter()
+                    .map(|op_id| (op_id.clone(), source.clone())),
+            );
+
             // Insert requests into fetch queue.
             for op_id in new_op_ids {
-                if let Err(err) =
-                    self.outgoing_request_tx.send((op_id, source.clone())).await
+                if let Err(err) = self
+                    .outgoing_request_tx
+                    .send((op_id.clone(), source.clone()))
+                    .await
                 {
-                    tracing::warn!(
-                        "could not insert fetch request into fetch queue: {err}"
+                    tracing::error!(
+                        ?err,
+                        "could not insert fetch request into fetch queue"
                     );
+                    // Remove request from state.
+                    let mut lock = self.state.lock().unwrap();
+                    lock.requests.remove(&(op_id, source.clone()));
+                    Self::notify_listeners_if_queue_drained(lock);
                 }
             }
 
@@ -198,6 +205,7 @@ impl Fetch for CoreFetch {
     fn notify_on_drained(&self, notify: futures::channel::oneshot::Sender<()>) {
         let mut lock = self.state.lock().expect("poisoned");
         if lock.requests.is_empty() {
+            drop(lock);
             if let Err(err) = notify.send(()) {
                 tracing::warn!(?err, "Failed to send notification on drained");
             }
@@ -215,6 +223,7 @@ impl CoreFetch {
     pub fn spawn_tasks(
         config: CoreFetchConfig,
         space_id: SpaceId,
+        report: DynReport,
         op_store: DynOpStore,
         peer_meta_store: DynPeerMetaStore,
         transport: DynTransport,
@@ -236,6 +245,8 @@ impl CoreFetch {
             channel::<IncomingResponse>(16_384);
 
         let state = Arc::new(Mutex::new(State {
+            space_id: space_id.clone(),
+            report,
             requests: HashSet::new(),
             notify_when_drained_senders: vec![],
         }));
@@ -247,12 +258,10 @@ impl CoreFetch {
             let request_task =
                 tokio::task::spawn(CoreFetch::outgoing_request_task(
                     state.clone(),
-                    outgoing_request_tx.clone(),
                     outgoing_request_rx.clone(),
                     space_id.clone(),
                     peer_meta_store.clone(),
                     Arc::downgrade(&transport),
-                    config.re_insert_outgoing_request_delay_ms,
                 ));
             tasks.push(request_task);
         }
@@ -299,12 +308,10 @@ impl CoreFetch {
 
     async fn outgoing_request_task(
         state: Arc<Mutex<State>>,
-        outgoing_request_tx: Sender<OutgoingRequest>,
         outgoing_request_rx: Arc<tokio::sync::Mutex<Receiver<OutgoingRequest>>>,
         space_id: SpaceId,
         peer_meta_store: DynPeerMetaStore,
         transport: WeakDynTransport,
-        re_insert_outgoing_request_delay: u32,
     ) {
         while let Some((op_id, peer_url)) =
             outgoing_request_rx.lock().await.recv().await
@@ -339,8 +346,7 @@ impl CoreFetch {
             // Do nothing if op id is no longer in the set of requests to send.
             //
             // If the peer URL is unresponsive, the current request will have been removed
-            // from state and no request will be sent and the request
-            // will not be re-inserted into the queue.
+            // from state and no request will be sent.
             {
                 let lock = state.lock().expect("poisoned");
                 if !lock.requests.contains(&(op_id.clone(), peer_url.clone())) {
@@ -374,45 +380,11 @@ impl CoreFetch {
                     ?peer_url,
                     "could not send fetch request: {err}."
                 );
-                state
-                    .lock()
-                    .expect("poisoned")
-                    .requests
-                    .retain(|(_, a)| *a != peer_url);
+                // Remove all requests to that peer and notify if drained.
+                let mut lock = state.lock().expect("poisoned");
+                lock.requests.retain(|(_, a)| *a != peer_url);
+                Self::notify_listeners_if_queue_drained(lock);
             }
-
-            // Re-insert the fetch request into the queue after a delay.
-            let outgoing_request_tx = outgoing_request_tx.clone();
-
-            tokio::task::spawn({
-                let state = state.clone();
-                async move {
-                    tokio::time::sleep(Duration::from_millis(
-                        re_insert_outgoing_request_delay as u64,
-                    ))
-                    .await;
-                    let mut lock = state.lock().expect("poisoned");
-                    // Only re-insert the request if it is still in the state, meaning that it
-                    // has not been removed from state because the requested op has come in or
-                    // the peer URL has been set as unresponsive.
-                    if lock
-                        .requests
-                        .contains(&(op_id.clone(), peer_url.clone()))
-                    {
-                        if let Err(err) = outgoing_request_tx
-                            .try_send((op_id.clone(), peer_url.clone()))
-                        {
-                            tracing::warn!(
-                                "could not re-insert fetch request for op {op_id} to peer {peer_url} into queue: {err}"
-                            );
-                            // Remove request from set to prevent build-up of state.
-                            lock.requests.remove(&(op_id, peer_url));
-
-                            Self::notify_listeners_if_queue_drained(lock);
-                        }
-                    }
-                }
-            });
         }
     }
 
@@ -420,7 +392,10 @@ impl CoreFetch {
         // Check if the fetch queue is drained.
         if state.requests.is_empty() {
             // Notify all listeners that the fetch queue is drained.
-            for notify in state.notify_when_drained_senders.drain(..) {
+            let senders =
+                std::mem::take(&mut state.notify_when_drained_senders);
+            drop(state);
+            for notify in senders {
                 if notify.send(()).is_err() {
                     tracing::warn!("Failed to send notification on drained");
                 }
@@ -487,7 +462,7 @@ impl CoreFetch {
         op_store: DynOpStore,
         state: Arc<Mutex<State>>,
     ) {
-        while let Some(ops) = incoming_response_rx.recv().await {
+        while let Some((ops, peer)) = incoming_response_rx.recv().await {
             let op_count = ops.len();
             tracing::debug!(?op_count, "incoming op response");
             let ops_data = ops.clone().into_iter().map(|op| op.data).collect();
@@ -505,6 +480,16 @@ impl CoreFetch {
                     // Ops were processed successfully by op store. Op ids are returned.
                     // The op ids are removed from the set of ops to fetch.
                     let mut lock = state.lock().unwrap();
+                    for (op_id, op) in processed_op_ids.iter().zip(ops) {
+                        // report that we received valid op data
+                        // from the remote peer.
+                        lock.report.fetched_op(
+                            lock.space_id.clone(),
+                            peer.clone(),
+                            op_id.clone(),
+                            op.data.len() as u64,
+                        );
+                    }
                     lock.requests
                         .retain(|(op_id, _)| !processed_op_ids.contains(op_id));
                 }

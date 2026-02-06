@@ -1,5 +1,5 @@
 use kitsune2_api::*;
-use kitsune2_core::factories::{CoreFetchConfig, CoreFetchModConfig};
+use kitsune2_core::factories::CoreFetchModConfig;
 use kitsune2_core::{default_test_builder, factories::MemoryOp};
 use kitsune2_test_utils::{
     enable_tracing, iter_check, random_bytes, space::TEST_SPACE_ID,
@@ -18,6 +18,12 @@ impl TxBaseHandler for MockTxHandler {
 }
 impl TxHandler for MockTxHandler {}
 
+impl TxSpaceHandler for MockTxHandler {
+    fn is_any_agent_at_url_blocked(&self, _peer_url: &Url) -> K2Result<bool> {
+        Ok(false)
+    }
+}
+
 fn create_op_list(num_ops: u16) -> (Vec<MemoryOp>, Vec<OpId>) {
     let mut ops = Vec::new();
     let mut op_ids = Vec::new();
@@ -32,6 +38,7 @@ fn create_op_list(num_ops: u16) -> (Vec<MemoryOp>, Vec<OpId>) {
 
 struct Peer {
     builder: Arc<Builder>,
+    report: DynReport,
     op_store: DynOpStore,
     peer_meta_store: DynPeerMetaStore,
     transport: DynTransport,
@@ -66,6 +73,15 @@ async fn make_peer(
         .create(builder.clone(), tx_handler.clone())
         .await
         .unwrap();
+
+    let report = builder
+        .report
+        .create(builder.clone(), transport.clone())
+        .await
+        .unwrap();
+
+    transport.register_space_handler(TEST_SPACE_ID, tx_handler.clone());
+
     let peer_url = tx_handler.peer_url.lock().unwrap().clone();
     if let Some(config) = fetch_config {
         builder.config.set_module_config(&config).unwrap();
@@ -77,6 +93,7 @@ async fn make_peer(
                 .create(
                     builder.clone(),
                     TEST_SPACE_ID,
+                    report.clone(),
                     op_store.clone(),
                     peer_meta_store.clone(),
                     transport.clone(),
@@ -90,6 +107,7 @@ async fn make_peer(
 
     Peer {
         builder,
+        report,
         op_store,
         peer_meta_store,
         transport,
@@ -189,12 +207,7 @@ async fn two_peer_fetch() {
 #[tokio::test(flavor = "multi_thread")]
 async fn bob_comes_online_after_being_unresponsive() {
     enable_tracing();
-    let fetch_config_alice = CoreFetchModConfig {
-        core_fetch: CoreFetchConfig {
-            re_insert_outgoing_request_delay_ms: 10,
-            ..Default::default()
-        },
-    };
+    let fetch_config_alice = CoreFetchModConfig::default();
     let Peer {
         fetch: fetch_alice,
         op_store: op_store_alice,
@@ -207,6 +220,7 @@ async fn bob_comes_online_after_being_unresponsive() {
     // Make Bob without fetch.
     let Peer {
         op_store: op_store_bob,
+        report: report_bob,
         peer_meta_store: peer_meta_store_bob,
         transport: transport_bob,
         peer_url: peer_url_bob,
@@ -261,6 +275,7 @@ async fn bob_comes_online_after_being_unresponsive() {
         .create(
             builder_bob.clone(),
             TEST_SPACE_ID,
+            report_bob,
             op_store_bob,
             peer_meta_store_bob,
             transport_bob.clone(),

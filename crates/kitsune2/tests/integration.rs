@@ -1,8 +1,9 @@
 use bytes::Bytes;
 use kitsune2::default_builder;
 use kitsune2_api::{
-    BoxFut, DhtArc, DynKitsune, DynSpace, DynSpaceHandler, K2Result,
-    KitsuneHandler, LocalAgent, OpId, SpaceHandler, SpaceId, Timestamp,
+    BoxFut, Builder, Config, DhtArc, DynKitsune, DynSpace, DynSpaceHandler, Id,
+    K2Result, KitsuneHandler, LocalAgent, OpId, SpaceHandler, SpaceId,
+    Timestamp,
 };
 use kitsune2_core::{
     factories::{
@@ -16,11 +17,30 @@ use kitsune2_test_utils::{
     bootstrap::TestBootstrapSrv, enable_tracing, iter_check, random_bytes,
     space::TEST_SPACE_ID,
 };
-use kitsune2_transport_tx5::config::{
-    Tx5TransportConfig, Tx5TransportModConfig,
+#[cfg(all(
+    not(feature = "transport-tx5-backend-libdatachannel"),
+    not(feature = "transport-tx5-backend-go-pion"),
+    not(feature = "transport-tx5-datachannel-vendored"),
+    feature = "transport-iroh"
+))]
+use kitsune2_transport_iroh::{
+    config::{IrohTransportConfig, IrohTransportModConfig},
+    test_utils::{spawn_iroh_relay_server, Server},
+    IrohTransportFactory,
 };
-use sbd_server::SbdServer;
 use std::sync::Arc;
+#[cfg(any(
+    feature = "transport-tx5-backend-libdatachannel",
+    feature = "transport-tx5-backend-go-pion",
+    feature = "transport-tx5-datachannel-vendored"
+))]
+use {
+    kitsune2_transport_tx5::{
+        config::{Tx5TransportConfig, Tx5TransportModConfig},
+        Tx5TransportFactory,
+    },
+    sbd_server::SbdServer,
+};
 
 fn create_op_list(num_ops: u16) -> (Vec<Bytes>, Vec<OpId>) {
     let mut ops = Vec::new();
@@ -40,6 +60,7 @@ impl KitsuneHandler for TestKitsuneHandler {
     fn create_space(
         &self,
         _space_id: SpaceId,
+        _config_override: Option<&Config>,
     ) -> BoxFut<'_, K2Result<DynSpaceHandler>> {
         Box::pin(async {
             let space_handler: DynSpaceHandler = Arc::new(TestSpaceHandler);
@@ -53,38 +74,78 @@ struct TestSpaceHandler;
 impl SpaceHandler for TestSpaceHandler {}
 
 async fn make_kitsune_node(
-    signal_server_url: &str,
+    relay_server_url: &str,
     bootstrap_server_url: &str,
 ) -> DynKitsune {
-    let kitsune_builder = default_builder().with_default_config().unwrap();
+    let kitsune_builder = Builder {
+        #[cfg(any(
+            feature = "transport-tx5-backend-libdatachannel",
+            feature = "transport-tx5-backend-go-pion",
+            feature = "transport-tx5-datachannel-vendored"
+        ))]
+        transport: Tx5TransportFactory::create(),
+        #[cfg(all(
+            not(feature = "transport-tx5-backend-libdatachannel"),
+            not(feature = "transport-tx5-backend-go-pion"),
+            not(feature = "transport-tx5-datachannel-vendored"),
+            feature = "transport-iroh"
+        ))]
+        transport: IrohTransportFactory::create(),
+        ..default_builder()
+    }
+    .with_default_config()
+    .unwrap();
     kitsune_builder
         .config
         .set_module_config(&CoreBootstrapModConfig {
             core_bootstrap: CoreBootstrapConfig {
-                server_url: bootstrap_server_url.to_owned(),
+                server_url: Some(bootstrap_server_url.to_owned()),
                 backoff_max_ms: 1000,
                 ..Default::default()
             },
         })
         .unwrap();
+
+    #[cfg(any(
+        feature = "transport-tx5-backend-libdatachannel",
+        feature = "transport-tx5-backend-go-pion",
+        feature = "transport-tx5-datachannel-vendored"
+    ))]
     kitsune_builder
         .config
         .set_module_config(&Tx5TransportModConfig {
             tx5_transport: Tx5TransportConfig {
-                server_url: signal_server_url.to_owned(),
+                server_url: relay_server_url.to_owned(),
                 signal_allow_plain_text: true,
                 timeout_s: 5,
+                webrtc_connect_timeout_s: 3,
                 ..Default::default()
             },
         })
         .unwrap();
+    #[cfg(all(
+        not(feature = "transport-tx5-backend-libdatachannel"),
+        not(feature = "transport-tx5-backend-go-pion"),
+        not(feature = "transport-tx5-datachannel-vendored"),
+        feature = "transport-iroh"
+    ))]
+    kitsune_builder
+        .config
+        .set_module_config(&IrohTransportModConfig {
+            iroh_transport: IrohTransportConfig {
+                relay_url: Some(relay_server_url.to_string()),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+
     kitsune_builder
         .config
         .set_module_config(&K2GossipModConfig {
             k2_gossip: K2GossipConfig {
-                initiate_interval_ms: 100,
-                min_initiate_interval_ms: 75,
-                initiate_jitter_ms: 10,
+                initiate_interval_ms: 1000,
+                min_initiate_interval_ms: 100,
+                initiate_jitter_ms: 100,
                 round_timeout_ms: 10_000,
                 ..Default::default()
             },
@@ -101,8 +162,58 @@ async fn make_kitsune_node(
     kitsune
 }
 
+#[cfg(any(
+    feature = "transport-tx5-backend-libdatachannel",
+    feature = "transport-tx5-backend-go-pion",
+    feature = "transport-tx5-datachannel-vendored"
+))]
+async fn sbd_signal_server() -> (String, SbdServer) {
+    let signal_server = SbdServer::new(Arc::new(sbd_server::Config {
+        bind: vec!["127.0.0.1:0".to_string()],
+        ..Default::default()
+    }))
+    .await
+    .unwrap();
+    let relay_server_url = format!("ws://{}", signal_server.bind_addrs()[0]);
+    (relay_server_url, signal_server)
+}
+
+#[cfg(all(
+    not(feature = "transport-tx5-backend-libdatachannel"),
+    not(feature = "transport-tx5-backend-go-pion"),
+    not(feature = "transport-tx5-datachannel-vendored"),
+    feature = "transport-iroh"
+))]
+async fn iroh_relay_server() -> (String, Server) {
+    let (_, relay_server_url, relay_server) = spawn_iroh_relay_server().await;
+    (relay_server_url.to_string(), relay_server)
+}
+
+macro_rules! relay_server_with_url {
+    () => {{
+        #[cfg(any(
+            feature = "transport-tx5-backend-libdatachannel",
+            feature = "transport-tx5-backend-go-pion",
+            feature = "transport-tx5-datachannel-vendored"
+        ))]
+        {
+            sbd_signal_server().await
+        }
+
+        #[cfg(all(
+            not(feature = "transport-tx5-backend-libdatachannel"),
+            not(feature = "transport-tx5-backend-go-pion"),
+            not(feature = "transport-tx5-datachannel-vendored"),
+            feature = "transport-iroh"
+        ))]
+        {
+            iroh_relay_server().await
+        }
+    }};
+}
+
 async fn start_space(kitsune: &DynKitsune) -> DynSpace {
-    let space = kitsune.space(TEST_SPACE_ID).await.unwrap();
+    let space = kitsune.space(TEST_SPACE_ID, None).await.unwrap();
 
     // Create an agent.
     let local_agent = Arc::new(Ed25519LocalAgent::default());
@@ -113,14 +224,25 @@ async fn start_space(kitsune: &DynKitsune) -> DynSpace {
 
     // Wait for agent to publish their info to the bootstrap & peer store.
     iter_check!(5000, 100, {
-        if space
-            .peer_store()
-            .get(local_agent.agent().clone())
-            .await
-            .unwrap()
-            .is_some()
-        {
-            break;
+        let agent = local_agent.agent().clone();
+        match space.peer_store().get(agent.clone()).await {
+            Ok(Some(peer)) => {
+                tracing::info!("Found local agent in peer store: {:?}", peer);
+                break;
+            }
+            Ok(None) => {
+                tracing::debug!(
+                    "Local agent not yet in peer store: {:?}",
+                    agent
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Error getting local agent from peer store: {:?}",
+                    e
+                );
+                panic!("Peer store error: {e:?}");
+            }
         }
     });
 
@@ -131,30 +253,20 @@ async fn start_space(kitsune: &DynKitsune) -> DynSpace {
 async fn two_node_gossip() {
     enable_tracing();
 
-    let signal_server = SbdServer::new(Arc::new(sbd_server::Config {
-        bind: vec!["127.0.0.1:0".to_string()],
-        ..Default::default()
-    }))
-    .await
-    .unwrap();
-    let signal_server_url = format!("ws://{}", signal_server.bind_addrs()[0]);
+    let (relay_server_url, _relay_server) = relay_server_with_url!();
 
     let bootstrap_server = TestBootstrapSrv::new(false).await;
     let bootstrap_server_url = bootstrap_server.addr().to_string();
 
     // Create 2 Kitsune instances...
     let kitsune_1 =
-        make_kitsune_node(&signal_server_url, &bootstrap_server_url).await;
+        make_kitsune_node(&relay_server_url, &bootstrap_server_url).await;
     let kitsune_2 =
-        make_kitsune_node(&signal_server_url, &bootstrap_server_url).await;
+        make_kitsune_node(&relay_server_url, &bootstrap_server_url).await;
 
     // and 1 space with 1 joined agent each.
     let space_1 = start_space(&kitsune_1).await;
     let space_2 = start_space(&kitsune_2).await;
-
-    // Wait for Windows runner to catch up with establishing the connection.
-    #[cfg(target_os = "windows")]
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
     // Insert ops into both spaces' op stores.
     let (ops_1, op_ids_1) = create_op_list(1000);
@@ -171,7 +283,7 @@ async fn two_node_gossip() {
         .unwrap();
 
     // Wait for gossip to exchange all ops.
-    iter_check!(5000, 500, {
+    iter_check!(60_000, 1_000, {
         let actual_ops_1 = space_1
             .op_store()
             .retrieve_ops(op_ids_2.clone())
@@ -187,12 +299,12 @@ async fn two_node_gossip() {
         {
             break;
         } else {
-            println!(
+            tracing::info!(
                 "space 1 actual ops received {}/expected {}",
                 actual_ops_1.len(),
                 ops_2.len()
             );
-            println!(
+            tracing::info!(
                 "space 2 actual ops received {}/expected {}",
                 actual_ops_2.len(),
                 ops_1.len()
@@ -215,26 +327,25 @@ async fn two_node_gossip() {
 ///
 /// This isn't a perfect check for shutdown, but it's a reasonable expectation that if all the
 /// Tokio tasks for a space are gone, then it's not actively doing work in the background.
+#[cfg(any(
+    feature = "transport-tx5-backend-libdatachannel",
+    feature = "transport-tx5-backend-go-pion",
+    feature = "transport-tx5-datachannel-vendored"
+))]
 #[tokio::test]
 async fn shutdown_space() {
     enable_tracing();
 
-    let signal_server = SbdServer::new(Arc::new(sbd_server::Config {
-        bind: vec!["127.0.0.1:0".to_string()],
-        ..Default::default()
-    }))
-    .await
-    .unwrap();
-    let signal_server_url = format!("ws://{}", signal_server.bind_addrs()[0]);
+    let (relay_server_url, _relay_server) = relay_server_with_url!();
 
     let bootstrap_server = TestBootstrapSrv::new(false).await;
     let bootstrap_server_url = bootstrap_server.addr().to_string();
 
     // Create 2 Kitsune instances..
     let kitsune_1 =
-        make_kitsune_node(&signal_server_url, &bootstrap_server_url).await;
+        make_kitsune_node(&relay_server_url, &bootstrap_server_url).await;
     let kitsune_2 =
-        make_kitsune_node(&signal_server_url, &bootstrap_server_url).await;
+        make_kitsune_node(&relay_server_url, &bootstrap_server_url).await;
 
     let metrics = tokio::runtime::Handle::current().metrics();
     let initial_tasks = metrics.num_alive_tasks();
@@ -355,4 +466,201 @@ async fn shutdown_space() {
     // The spaces should be gone.
     assert!(kitsune_1.space_if_exists(TEST_SPACE_ID).await.is_none());
     assert!(kitsune_2.space_if_exists(TEST_SPACE_ID).await.is_none());
+}
+
+#[tokio::test]
+async fn test_space_should_not_start_without_bootstrap_url_configured() {
+    enable_tracing();
+
+    // Build Kitsune2 normally, but DO NOT set any bootstrap module config.
+    let kitsune_builder = default_builder().with_default_config().unwrap();
+
+    #[cfg(any(
+        feature = "transport-tx5-backend-libdatachannel",
+        feature = "transport-tx5-backend-go-pion",
+        feature = "transport-tx5-datachannel-vendored"
+    ))]
+    {
+        let signal_server = SbdServer::new(Arc::new(sbd_server::Config {
+            bind: vec!["127.0.0.1:0".to_string()],
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+        let signal_server_url =
+            format!("ws://{}", signal_server.bind_addrs()[0]);
+        kitsune_builder
+            .config
+            .set_module_config(&Tx5TransportModConfig {
+                tx5_transport: Tx5TransportConfig {
+                    server_url: signal_server_url.to_owned(),
+                    signal_allow_plain_text: true,
+                    timeout_s: 5,
+                    webrtc_connect_timeout_s: 3,
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+    }
+    kitsune_builder
+        .config
+        .set_module_config(&K2GossipModConfig {
+            k2_gossip: K2GossipConfig {
+                initiate_interval_ms: 1000,
+                min_initiate_interval_ms: 100,
+                initiate_jitter_ms: 100,
+                round_timeout_ms: 10_000,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+
+    // Build should succeed.
+    let kitsune = kitsune_builder.build().await.expect("Build Kitsune2");
+
+    // register handler
+    let kitsune_handler = Arc::new(TestKitsuneHandler);
+    kitsune
+        .register_handler(kitsune_handler.clone())
+        .await
+        .expect("Register handler");
+
+    // Creating a space MUST fail because there is no bootstrap config.
+    let result = kitsune.space(TEST_SPACE_ID, None).await;
+
+    assert!(
+        result.is_err(),
+        "Expected creating a space to fail when no bootstrap URL is configured"
+    );
+}
+
+#[tokio::test]
+async fn test_should_start_space_with_different_bootstrap_urls() {
+    enable_tracing();
+
+    // Create two independent bootstrap servers
+    let bootstrap_a = TestBootstrapSrv::new(false).await;
+    let bootstrap_b = TestBootstrapSrv::new(false).await;
+    let bootstrap_url_a = bootstrap_a.addr().to_string();
+    let bootstrap_url_b = bootstrap_b.addr().to_string();
+
+    // Build Kitsune2 normally, but DO NOT set any bootstrap module config.
+    let kitsune_builder = default_builder().with_default_config().unwrap();
+
+    #[cfg(any(
+        feature = "transport-tx5-backend-libdatachannel",
+        feature = "transport-tx5-backend-go-pion",
+        feature = "transport-tx5-datachannel-vendored"
+    ))]
+    {
+        let signal_server = SbdServer::new(Arc::new(sbd_server::Config {
+            bind: vec!["127.0.0.1:0".to_string()],
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+        let signal_server_url =
+            format!("ws://{}", signal_server.bind_addrs()[0]);
+        kitsune_builder
+            .config
+            .set_module_config(&Tx5TransportModConfig {
+                tx5_transport: Tx5TransportConfig {
+                    server_url: signal_server_url.to_owned(),
+                    signal_allow_plain_text: true,
+                    timeout_s: 5,
+                    webrtc_connect_timeout_s: 3,
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+    }
+    kitsune_builder
+        .config
+        .set_module_config(&K2GossipModConfig {
+            k2_gossip: K2GossipConfig {
+                initiate_interval_ms: 1000,
+                min_initiate_interval_ms: 100,
+                initiate_jitter_ms: 100,
+                round_timeout_ms: 10_000,
+                ..Default::default()
+            },
+        })
+        .unwrap();
+
+    let kitsune = kitsune_builder.build().await.unwrap();
+    kitsune
+        .register_handler(Arc::new(TestKitsuneHandler))
+        .await
+        .unwrap();
+
+    // Custom configs for the two spaces
+    let config_a = Config::default();
+    config_a
+        .set_module_config(&CoreBootstrapModConfig {
+            core_bootstrap: CoreBootstrapConfig {
+                server_url: Some(bootstrap_url_a.clone()),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+
+    let config_b = Config::default();
+    config_b
+        .set_module_config(&CoreBootstrapModConfig {
+            core_bootstrap: CoreBootstrapConfig {
+                server_url: Some(bootstrap_url_b.clone()),
+                ..Default::default()
+            },
+        })
+        .unwrap();
+
+    // Create the two spaces with different bootstrap URLs
+    let space_a = kitsune
+        .space(TEST_SPACE_ID, Some(config_a))
+        .await
+        .expect("Create space A");
+
+    let space_b = kitsune
+        .space(SpaceId(Id(Bytes::from("space_b"))), Some(config_b))
+        .await
+        .expect("Create space B");
+
+    // Attach a local agent to each space
+    let agent_a = Arc::new(Ed25519LocalAgent::default());
+    agent_a.set_tgt_storage_arc_hint(DhtArc::FULL);
+    iter_check!(60_000, 1_000, {
+        if space_a.local_agent_join(agent_a.clone()).await.is_ok() {
+            break;
+        }
+    });
+    let agent_b = Arc::new(Ed25519LocalAgent::default());
+    agent_b.set_tgt_storage_arc_hint(DhtArc::FULL);
+    iter_check!(60_000, 1_000, {
+        if space_b.local_agent_join(agent_b.clone()).await.is_ok() {
+            break;
+        }
+    });
+
+    let agent_a_id = agent_a.agent();
+    let agent_b_id = agent_b.agent();
+    assert!(space_a.peer_store().get(agent_a_id.clone()).await.is_ok());
+    assert!(space_b.peer_store().get(agent_b_id.clone()).await.is_ok());
+    assert!(
+        space_a
+            .peer_store()
+            .get(agent_b_id.clone())
+            .await
+            .unwrap()
+            .is_none(),
+        "Agent B should not be in space A's peer store"
+    );
+    assert!(
+        space_b
+            .peer_store()
+            .get(agent_a_id.clone())
+            .await
+            .unwrap()
+            .is_none(),
+        "Agent A should not be in space B's peer store"
+    );
 }

@@ -1,5 +1,7 @@
 //! The core space implementation provided by Kitsune2.
 
+use crate::factories::core_access::CorePeerAccessState;
+use crate::get_all_remote_agents;
 use kitsune2_api::*;
 use std::sync::{Arc, RwLock, Weak};
 
@@ -56,7 +58,6 @@ mod config {
     }
 }
 
-use crate::get_all_remote_agents;
 pub use config::*;
 
 /// The core space implementation provided by Kitsune2.
@@ -85,13 +86,22 @@ impl SpaceFactory for CoreSpaceFactory {
     fn create(
         &self,
         builder: Arc<Builder>,
+        config_override: Option<Config>,
         handler: DynSpaceHandler,
         space_id: SpaceId,
+        report: DynReport,
         tx: DynTransport,
     ) -> BoxFut<'static, K2Result<DynSpace>> {
         Box::pin(async move {
+            let builder = match config_override {
+                Some(cfg_override) => {
+                    Arc::new(builder.with_config_overrides(cfg_override)?)
+                }
+                None => builder,
+            };
+            let builder_config = &builder.config;
             let config: CoreSpaceModConfig =
-                builder.config.get_module_config()?;
+                builder_config.get_module_config()?;
             let blocks = builder
                 .blocks
                 .create(builder.clone(), space_id.clone())
@@ -100,12 +110,19 @@ impl SpaceFactory for CoreSpaceFactory {
                 .peer_store
                 .create(builder.clone(), space_id.clone(), blocks.clone())
                 .await?;
+
+            let peer_access_state = Arc::new(CorePeerAccessState::new(
+                peer_store.clone(),
+                blocks.clone(),
+            )?);
+
             let bootstrap = builder
                 .bootstrap
                 .create(builder.clone(), peer_store.clone(), space_id.clone())
                 .await?;
             let local_agent_store =
                 builder.local_agent_store.create(builder.clone()).await?;
+            report.space(space_id.clone(), local_agent_store.clone());
             let inner = Arc::new(RwLock::new(InnerData { current_url: None }));
             let op_store = builder
                 .op_store
@@ -120,6 +137,7 @@ impl SpaceFactory for CoreSpaceFactory {
                 .create(
                     builder.clone(),
                     space_id.clone(),
+                    report,
                     op_store.clone(),
                     peer_meta_store.clone(),
                     tx.clone(),
@@ -170,6 +188,7 @@ impl SpaceFactory for CoreSpaceFactory {
                     publish,
                     gossip,
                     blocks,
+                    peer_access_state,
                 )
             });
             Ok(out)
@@ -243,6 +262,31 @@ impl TxSpaceHandler for TxHandlerTranslator {
             }
         })
     }
+
+    fn is_any_agent_at_url_blocked(&self, peer_url: &Url) -> K2Result<bool> {
+        let core_space = self
+            .1
+            .upgrade()
+            .ok_or(K2Error::other("CoreSpace has been dropped."))?;
+
+        let blocked = match core_space
+            .peer_access_state
+            .get_access_decision(peer_url.clone())?
+        {
+            Some(access) => access.decision == AccessDecision::Blocked,
+            None => {
+                // This is normal for blocked peers, but could be a bug for others. Best to log at
+                // debug level which can be accessed if needed but won't create noisy logs if a
+                // blocked peer keeps sending messages.
+                tracing::debug!(
+                    "No access decision found for peer url: {:?}",
+                    peer_url
+                );
+                true
+            }
+        };
+        Ok(blocked)
+    }
 }
 
 struct InnerData {
@@ -261,6 +305,7 @@ struct CoreSpace {
     publish: DynPublish,
     gossip: DynGossip,
     blocks: DynBlocks,
+    peer_access_state: DynPeerAccessState,
     inner: Arc<RwLock<InnerData>>,
     task_check_agent_infos: tokio::task::JoinHandle<()>,
 }
@@ -283,7 +328,7 @@ impl std::fmt::Debug for CoreSpace {
 
 impl CoreSpace {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    fn new(
         config: CoreSpaceConfig,
         space_id: SpaceId,
         tx: DynTransport,
@@ -297,6 +342,7 @@ impl CoreSpace {
         publish: DynPublish,
         gossip: DynGossip,
         blocks: DynBlocks,
+        peer_access_state: DynPeerAccessState,
     ) -> Self {
         let task_check_agent_infos = tokio::task::spawn(check_agent_infos(
             config,
@@ -310,6 +356,7 @@ impl CoreSpace {
             bootstrap,
             local_agent_store,
             peer_meta_store,
+            peer_access_state,
             inner,
             op_store,
             task_check_agent_infos,

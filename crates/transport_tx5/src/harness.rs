@@ -39,7 +39,9 @@ impl Tx5TransportTestHarness {
             auth_material,
             transport: Tx5TransportFactory::create(),
             ..kitsune2_core::default_test_builder()
-        };
+        }
+        .with_default_config()
+        .unwrap();
 
         builder
             .config
@@ -146,6 +148,10 @@ pub struct MockTxHandler {
             + Send
             + Sync,
     >,
+    /// Mock function to implement the [`TxSpaceHandler::is_any_agent_at_url_blocked()`] method.
+    #[allow(clippy::type_complexity)]
+    pub url_blocked:
+        Arc<dyn Fn(&Url) -> K2Result<bool> + 'static + Send + Sync>,
 }
 
 impl std::fmt::Debug for MockTxHandler {
@@ -165,6 +171,7 @@ impl Default for MockTxHandler {
             recv_space_not: Arc::new(|_, _, _| Ok(())),
             set_unresp: Arc::new(|_, _| Ok(())),
             recv_mod_msg: Arc::new(|_, _, _, _| Ok(())),
+            url_blocked: Arc::new(|_| Ok(false)),
         }
     }
 }
@@ -188,16 +195,16 @@ impl TxHandler for MockTxHandler {
     fn preflight_gather_outgoing(
         &self,
         peer_url: Url,
-    ) -> K2Result<bytes::Bytes> {
-        (self.pre_out)(peer_url)
+    ) -> BoxFut<'_, K2Result<bytes::Bytes>> {
+        Box::pin(async { (self.pre_out)(peer_url) })
     }
 
     fn preflight_validate_incoming(
         &self,
         peer_url: Url,
         data: bytes::Bytes,
-    ) -> K2Result<()> {
-        (self.pre_in)(peer_url, data)
+    ) -> BoxFut<'_, K2Result<()>> {
+        Box::pin(async { (self.pre_in)(peer_url, data) })
     }
 }
 
@@ -217,6 +224,10 @@ impl TxSpaceHandler for MockTxHandler {
         when: Timestamp,
     ) -> BoxFut<'_, K2Result<()>> {
         Box::pin(async move { (self.set_unresp)(peer, when) })
+    }
+
+    fn is_any_agent_at_url_blocked(&self, peer_url: &Url) -> K2Result<bool> {
+        (self.url_blocked)(peer_url)
     }
 }
 

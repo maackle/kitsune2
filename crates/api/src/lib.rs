@@ -35,6 +35,9 @@ pub(crate) mod serde_bytes_base64 {
     }
 }
 
+mod access;
+pub use access::*;
+
 mod agent;
 pub use agent::*;
 
@@ -76,6 +79,9 @@ pub use timestamp::*;
 
 mod fetch;
 pub use fetch::*;
+
+mod report;
+pub use report::*;
 
 mod peer_meta_store;
 pub use peer_meta_store::*;

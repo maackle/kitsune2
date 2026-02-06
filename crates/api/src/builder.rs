@@ -6,7 +6,7 @@ use std::sync::Arc;
 /// The general Kitsune2 builder.
 /// This contains both configuration and factory instances,
 /// allowing construction of runtime module instances.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Builder {
     /// The module configuration to be used when building modules.
     /// This can be loaded from disk or modified before freezing the builder.
@@ -38,6 +38,10 @@ pub struct Builder {
     /// The [FetchFactory] to be used for creating
     /// [Fetch] instances.
     pub fetch: DynFetchFactory,
+
+    /// The [ReportFactory] to be used for creating
+    /// the [Report] instance.
+    pub report: DynReportFactory,
 
     /// The [TransportFactory] to be used for creating
     /// [Transport] instances.
@@ -83,6 +87,7 @@ impl Builder {
                 peer_store,
                 bootstrap,
                 fetch,
+                report,
                 transport,
                 op_store,
                 peer_meta_store,
@@ -97,6 +102,7 @@ impl Builder {
             peer_store.default_config(config)?;
             bootstrap.default_config(config)?;
             fetch.default_config(config)?;
+            report.default_config(config)?;
             transport.default_config(config)?;
             op_store.default_config(config)?;
             peer_meta_store.default_config(config)?;
@@ -118,6 +124,7 @@ impl Builder {
         self.peer_store.validate_config(&self.config)?;
         self.bootstrap.validate_config(&self.config)?;
         self.fetch.validate_config(&self.config)?;
+        self.report.validate_config(&self.config)?;
         self.transport.validate_config(&self.config)?;
         self.op_store.validate_config(&self.config)?;
         self.peer_meta_store.validate_config(&self.config)?;
@@ -129,6 +136,21 @@ impl Builder {
         self.config.mark_validated();
 
         Ok(())
+    }
+
+    /// Merge in configuration overrides.
+    ///
+    /// Merged config is validated before returning.
+    pub fn with_config_overrides(&self, overrides: Config) -> K2Result<Self> {
+        let mut builder = self.clone();
+
+        // merge config
+        builder.config = builder.config.merge_config_overrides(&overrides)?;
+
+        // validate
+        builder.validate_config()?;
+
+        Ok(builder)
     }
 
     /// Generate the actual kitsune instance, validating configuration

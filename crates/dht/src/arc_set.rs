@@ -6,11 +6,24 @@ use std::collections::HashSet;
 ///
 /// A set of [DhtArc]s is combined as a set union into an [ArcSet].
 ///
-/// To restrict [crate::dht::Dht] operations to a specific set of sectors, the [ArcSet]s of two
+/// To restrict [`crate::dht::Dht`] operations to a specific set of sectors, the [`ArcSet`]s of two
 /// DHTs can be intersected to find the common sectors, using [ArcSet::intersection].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct ArcSet {
     inner: HashSet<u32>,
+}
+
+impl std::fmt::Debug for ArcSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut dbg = f.debug_struct("ArcSet");
+        match self.inner.len() {
+            0 => dbg.field("sectors", &"Empty").finish(),
+            len if len == (u32::MAX / SECTOR_SIZE + 1) as usize => {
+                dbg.field("sectors", &"Full").finish()
+            }
+            _ => dbg.field("sectors", &self.inner.len()).finish(),
+        }
+    }
 }
 
 impl ArcSet {
@@ -54,8 +67,7 @@ impl ArcSet {
                         && !(end == u32::MAX && start == 0)
                     {
                         return Err(K2Error::other(format!(
-                            "Invalid arc, expected end at {} but arc specifies {}",
-                            start, end
+                            "Invalid arc, expected end at {start} but arc specifies {end}"
                         )));
                     }
                 }
@@ -467,6 +479,30 @@ mod test {
                 DhtArc::Arc(0, 2 * SECTOR_SIZE - 1),
                 DhtArc::Arc(510 * SECTOR_SIZE, u32::MAX)
             ]
+        );
+    }
+
+    #[test]
+    fn debug_arc_set() {
+        assert_eq!(
+            "ArcSet { sectors: \"Empty\" }",
+            format!("{:?}", ArcSet::new(vec![DhtArc::Empty]).unwrap())
+        );
+
+        let set =
+            ArcSet::new(vec![DhtArc::Arc(0, 2 * SECTOR_SIZE - 1)]).unwrap();
+        assert_eq!("ArcSet { sectors: 2 }", format!("{set:?}"));
+
+        let set = ArcSet::new(vec![
+            DhtArc::Arc(0, 2 * SECTOR_SIZE - 1),
+            DhtArc::Arc(SECTOR_SIZE, 3 * SECTOR_SIZE - 1),
+        ])
+        .unwrap();
+        assert_eq!("ArcSet { sectors: 3 }", format!("{set:?}"));
+
+        assert_eq!(
+            "ArcSet { sectors: \"Full\" }",
+            format!("{:?}", ArcSet::new(vec![DhtArc::FULL]).unwrap())
         );
     }
 }

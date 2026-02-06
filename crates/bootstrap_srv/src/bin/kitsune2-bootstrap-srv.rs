@@ -62,6 +62,12 @@ pub struct Args {
     #[arg(long)]
     pub prune_interval_ms: Option<u32>,
 
+    /// The allowed origins for CORS requests.
+    ///
+    /// If `None`, defaults to allowing any origin.
+    #[arg(long)]
+    pub allowed_origins: Option<Vec<String>>,
+
     /// If specified, this server will only handle bootstrap requests,
     /// dropping websocket upgrade requests from sbd clients.
     #[arg(long)]
@@ -95,6 +101,10 @@ pub struct Args {
     #[arg(long)]
     pub sbd_limit_ip_byte_burst: Option<i32>,
 
+    /// If specified, this will enable exporting metrics to an OpenTelemetry endpoint.
+    #[arg(long)]
+    pub otlp_endpoint: Option<String>,
+
     /// The authentication "Hook Server" as defined by
     /// <https://github.com/holochain/sbd/blob/main/spec-auth.md>
     #[arg(long)]
@@ -126,7 +136,12 @@ fn main() {
         Config::testing()
     };
 
-    if args.tls_cert.is_some() || args.tls_key.is_some() {
+    // Install the crypto provider if TLS certs are provided, or if iroh-relay
+    // feature is enabled (iroh-relay uses rustls internally and needs the provider).
+    if args.tls_cert.is_some()
+        || args.tls_key.is_some()
+        || cfg!(feature = "iroh-relay")
+    {
         rustls::crypto::ring::default_provider()
             .install_default()
             .expect("Failed to configure default TLS provider");
@@ -151,24 +166,35 @@ fn main() {
     if let Some(ms) = args.prune_interval_ms {
         config.prune_interval = std::time::Duration::from_millis(ms as u64);
     }
+    if let Some(allowed_origins) = args.allowed_origins {
+        config.allowed_origins = Some(allowed_origins);
+    }
 
-    // Apply SBD command line arguments
-    if let Some(header) = args.sbd_trusted_ip_header {
-        config.sbd.trusted_ip_header = Some(header);
+    #[cfg(feature = "sbd")]
+    {
+        // Apply SBD command line arguments
+        if let Some(header) = args.sbd_trusted_ip_header {
+            config.sbd.trusted_ip_header = Some(header);
+        }
+        if let Some(limit) = args.sbd_limit_clients {
+            config.sbd.limit_clients = limit;
+        }
+        if args.sbd_disable_rate_limiting {
+            config.sbd.disable_rate_limiting = true;
+        }
+        if let Some(kbps) = args.sbd_limit_ip_kbps {
+            config.sbd.limit_ip_kbps = kbps;
+        }
+        if let Some(byte_burst) = args.sbd_limit_ip_byte_burst {
+            config.sbd.limit_ip_byte_burst = byte_burst;
+        }
+        config.sbd.otlp_endpoint = args.otlp_endpoint;
+        config.sbd.authentication_hook_server = args.authentication_hook_server;
+
+        // Setup opentelemetry metrics
+        sbd_server::enable_otlp_metrics_if_configured(&config.sbd)
+            .expect("Failed to initialize OTLP metrics");
     }
-    if let Some(limit) = args.sbd_limit_clients {
-        config.sbd.limit_clients = limit;
-    }
-    if args.sbd_disable_rate_limiting {
-        config.sbd.disable_rate_limiting = true;
-    }
-    if let Some(kbps) = args.sbd_limit_ip_kbps {
-        config.sbd.limit_ip_kbps = kbps;
-    }
-    if let Some(byte_burst) = args.sbd_limit_ip_byte_burst {
-        config.sbd.limit_ip_byte_burst = byte_burst;
-    }
-    config.sbd.authentication_hook_server = args.authentication_hook_server;
 
     tracing::info!(?config);
 

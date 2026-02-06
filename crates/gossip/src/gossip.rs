@@ -424,10 +424,7 @@ impl TxModuleHandler for K2Gossip {
         }
 
         if module != MOD_NAME {
-            return Err(K2Error::other(format!(
-                "wrong module name: {}",
-                module
-            )));
+            return Err(K2Error::other(format!("wrong module name: {module}")));
         }
 
         let msg = deserialize_gossip_message(data)?;
@@ -464,8 +461,7 @@ mod test {
         let harness_2 = factory.new_instance().await;
         let agent_info_2 = harness_2.join_local_agent(DhtArc::FULL).await;
 
-        // Join extra agents for each peer. These will take a few seconds to be
-        // found by bootstrap. Try to sync them with gossip.
+        // Join extra agents for each peer. Try to sync them with gossip.
         let secret_agent_1 = harness_1.join_local_agent(DhtArc::FULL).await;
         assert!(harness_2
             .space
@@ -484,10 +480,10 @@ mod test {
             .is_none());
 
         // Simulate peer discovery so that gossip can sync agents
-        harness_2
+        harness_1
             .space
             .peer_store()
-            .insert(vec![agent_info_1.clone()])
+            .insert(vec![agent_info_2.clone()])
             .await
             .unwrap();
 
@@ -498,20 +494,31 @@ mod test {
             .wait_for_agent_in_peer_store(secret_agent_1.agent.clone())
             .await;
 
-        let completed_1 = harness_1
-            .peer_meta_store
-            .completed_rounds(agent_info_2.url.clone().unwrap())
-            .await
-            .unwrap()
-            .unwrap_or_default();
-        assert_eq!(1, completed_1);
-        let completed_2 = harness_2
-            .peer_meta_store
-            .completed_rounds(agent_info_1.url.clone().unwrap())
-            .await
-            .unwrap()
-            .unwrap_or_default();
-        assert_eq!(1, completed_2);
+        iter_check!(1000, {
+            let completed_1 = harness_1
+                .peer_meta_store
+                .completed_rounds(agent_info_2.url.clone().unwrap())
+                .await
+                .unwrap()
+                .unwrap_or_default();
+
+            if completed_1 >= 1 {
+                break;
+            }
+        });
+
+        iter_check!(1000, {
+            let completed_2 = harness_2
+                .peer_meta_store
+                .completed_rounds(agent_info_1.url.clone().unwrap())
+                .await
+                .unwrap()
+                .unwrap_or_default();
+
+            if completed_2 >= 1 {
+                break;
+            }
+        });
     }
 
     #[tokio::test]
@@ -534,13 +541,23 @@ mod test {
             .unwrap();
 
         let harness_2 = factory.new_instance().await;
-        harness_2.join_local_agent(DhtArc::FULL).await;
+        let agent_info_2 = harness_2.join_local_agent(DhtArc::FULL).await;
         let op_2 = MemoryOp::new(Timestamp::now(), vec![2; 128]);
         let op_id_2 = op_2.compute_op_id();
         harness_2
             .space
             .op_store()
             .process_incoming_ops(vec![op_2.clone().into()])
+            .await
+            .unwrap();
+
+        // Simulate peer discovery so that gossip messages won't be dropped
+        // due to no associated agents in the peer store when checking for
+        // blocks.
+        harness_1
+            .space
+            .peer_store()
+            .insert(vec![agent_info_2.clone()])
             .await
             .unwrap();
 
@@ -572,11 +589,6 @@ mod test {
             .process_incoming_ops(vec![op_1.clone().into()])
             .await
             .unwrap();
-        harness_1
-            .space
-            .inform_ops_stored(vec![op_1.clone().into()])
-            .await
-            .unwrap();
 
         let harness_2 = factory.new_instance().await;
         let agent_info_2 = harness_2.join_local_agent(DhtArc::FULL).await;
@@ -586,11 +598,6 @@ mod test {
             .space
             .op_store()
             .process_incoming_ops(vec![op_2.clone().into()])
-            .await
-            .unwrap();
-        harness_2
-            .space
-            .inform_ops_stored(vec![op_2.clone().into()])
             .await
             .unwrap();
 
@@ -651,11 +658,6 @@ mod test {
             .process_incoming_ops(vec![op_1.clone().into()])
             .await
             .unwrap();
-        harness_1
-            .space
-            .inform_ops_stored(vec![op_1.clone().into()])
-            .await
-            .unwrap();
 
         let harness_2 = factory.new_instance().await;
         let agent_info_2 = harness_2.join_local_agent(DhtArc::FULL).await;
@@ -668,11 +670,6 @@ mod test {
             .space
             .op_store()
             .process_incoming_ops(vec![op_2.clone().into()])
-            .await
-            .unwrap();
-        harness_2
-            .space
-            .inform_ops_stored(vec![op_2.clone().into()])
             .await
             .unwrap();
 
@@ -724,13 +721,23 @@ mod test {
         harness_1.join_local_agent(DhtArc::FULL).await;
 
         let harness_2 = factory.new_instance().await;
-        let local_agent_2 = harness_2.join_local_agent(DhtArc::FULL).await;
+        let agent_info_2 = harness_2.join_local_agent(DhtArc::FULL).await;
         let op_2 = MemoryOp::new(Timestamp::now(), vec![2; 128]);
         let op_id_2 = op_2.compute_op_id();
         harness_2
             .space
             .op_store()
             .process_incoming_ops(vec![op_2.clone().into()])
+            .await
+            .unwrap();
+
+        // Simulate peer discovery so that gossip messages won't be dropped
+        // due to no associated agents in the peer store when checking for
+        // blocks.
+        harness_1
+            .space
+            .peer_store()
+            .insert(vec![agent_info_2.clone()])
             .await
             .unwrap();
 
@@ -749,7 +756,7 @@ mod test {
         assert!(summary.dht_summary.contains_key("0..4294967295"));
         let meta = summary
             .peer_meta
-            .get(&local_agent_2.url.clone().unwrap())
+            .get(&agent_info_2.url.clone().unwrap())
             .cloned()
             .unwrap();
 
@@ -785,7 +792,7 @@ mod test {
             let junk_harness = factory.new_instance().await;
             let junk_agent = junk_harness.join_local_agent(DhtArc::FULL).await;
 
-            println!("Created a junk agent: {:#?}", junk_agent);
+            println!("Created a junk agent: {junk_agent:#?}");
 
             junk_agents.push(junk_agent);
 
