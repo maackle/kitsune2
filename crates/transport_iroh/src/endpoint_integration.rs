@@ -14,10 +14,10 @@ pub struct IrohIntegration {
     pub receiver: tokio::sync::mpsc::Receiver<iroh::endpoint::Connection>,
 }
 
-enum IrohListener {
+pub(crate) enum IrohListener {
     Endpoint(Endpoint),
     Receiver(tokio::sync::mpsc::Receiver<iroh::endpoint::Connection>),
 }
 
 #[derive(Clone, Debug)]
-struct IrohSender(Endpoint);
+pub(crate) struct IrohSender(pub(crate) Endpoint);

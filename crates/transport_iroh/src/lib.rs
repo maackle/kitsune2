@@ -321,9 +321,12 @@ impl TransportFactory for IrohTransportFactory {
             let handler = TxImpHnd::new(handler);
             let config: IrohTransportModConfig =
                 builder.config.get_module_config()?;
-            let imp =
-                IrohTransport::create(config.iroh_transport, handler.clone())
-                    .await?;
+            let imp = IrohTransport::create(
+                config.iroh_transport,
+                handler.clone(),
+                self.integration.endpoint.clone(),
+            )
+            .await?;
             Ok(DefaultTransport::create(&handler, imp))
         })
     }
@@ -334,7 +337,7 @@ type Connections = Arc<RwLock<HashMap<Url, Arc<ConnectionContext>>>>;
 /// Iroh-based transport implementation.
 #[derive(Debug)]
 struct IrohTransport {
-    endpoint: DynIrohEndpoint,
+    endpoint: crate::IrohSender,
     handler: Arc<TxImpHnd>,
     local_url: Arc<RwLock<Option<Url>>>,
     connections: Connections,
@@ -368,31 +371,46 @@ impl IrohTransport {
     async fn create(
         config: IrohTransportConfig,
         handler: Arc<TxImpHnd>,
+        integration: Option<IrohIntegration>,
     ) -> K2Result<DynTxImp> {
-        // If a relay server is configured, only use that.
-        // Otherwise, use the default relay servers provided by n0.
-        let mut builder = if let Some(relay_url) = &config.relay_url {
-            let relay_url = RelayUrl::from_str(relay_url)
-                .map_err(|err| K2Error::other_src("Invalid relay URL", err))?;
-            let relay_map = RelayMap::from_iter([relay_url]);
-            Endpoint::empty_builder(RelayMode::Custom(relay_map))
+        let (sender, listener) = if let Some(integration) = integration {
+            (
+                IrohSender(integration.endpoint),
+                IrohListener::Receiver(integration.receiver),
+            )
         } else {
-            Endpoint::empty_builder(RelayMode::Default)
+            // If a relay server is configured, only use that.
+            // Otherwise, use the default relay servers provided by n0.
+            let mut builder = if let Some(relay_url) = &config.relay_url {
+                let relay_url =
+                    RelayUrl::from_str(relay_url).map_err(|err| {
+                        K2Error::other_src("Invalid relay URL", err)
+                    })?;
+                let relay_map = RelayMap::from_iter([relay_url]);
+                Endpoint::empty_builder(RelayMode::Custom(relay_map))
+            } else {
+                Endpoint::empty_builder(RelayMode::Default)
+            };
+            // Set kitsune2 protocol for handling data.
+            builder = builder.alpns(vec![ALPN.to_vec()]);
+
+            // Test relay server uses self-signed certificate, so skip certificate verification.
+            #[cfg(feature = "test-utils")]
+            {
+                builder = builder.insecure_skip_relay_cert_verify(true);
+            }
+
+            let endpoint = builder.bind().await.map_err(|err| {
+                K2Error::other_src("Failed to bind iroh endpoint", err)
+            })?;
+
+            (
+                IrohSender(endpoint.clone()),
+                IrohListener::Endpoint(endpoint),
+            )
         };
-        // Set kitsune2 protocol for handling data.
-        builder = builder.alpns(vec![ALPN.to_vec()]);
 
-        // Test relay server uses self-signed certificate, so skip certificate verification.
-        #[cfg(feature = "test-utils")]
-        {
-            builder = builder.insecure_skip_relay_cert_verify(true);
-        }
-
-        let endpoint = builder.bind().await.map_err(|err| {
-            K2Error::other_src("Failed to bind iroh endpoint", err)
-        })?;
-
-        let endpoint = Arc::new(IrohEndpoint::new(endpoint));
+        let endpoint = Arc::new(IrohEndpoint::new(sender.0.clone()));
         let local_url = Arc::new(RwLock::new(None));
         let connections = Arc::new(RwLock::new(HashMap::new()));
         let connection_locks = Arc::new(Mutex::new(HashMap::new()));
@@ -412,7 +430,7 @@ impl IrohTransport {
         );
 
         let out: DynTxImp = Arc::new(Self {
-            endpoint,
+            endpoint: sender,
             handler,
             local_url,
             connections,
