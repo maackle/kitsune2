@@ -1,3 +1,5 @@
+use iroh::Endpoint;
+
 /// Specifies how to integrate kitsune's iroh transport into an existing endpoint.
 ///
 /// Iroh can only really accommodate a single accept loop for a given endpoint.
@@ -11,3 +13,11 @@ pub struct IrohIntegration {
     /// The receiver for incoming connections from the "mother" protocol.
     pub receiver: tokio::sync::mpsc::Receiver<iroh::endpoint::Connection>,
 }
+
+enum IrohListener {
+    Endpoint(Endpoint),
+    Receiver(tokio::sync::mpsc::Receiver<iroh::endpoint::Connection>),
+}
+
+#[derive(Clone, Debug)]
+struct IrohSender(Endpoint);
